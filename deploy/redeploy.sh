@@ -12,8 +12,9 @@
 #
 # Backups:
 #   The previous /etc/lp700-server/config.toml and /etc/udev/rules.d/99-lp700.rules
-#   are saved next to themselves with a .bak.YYYYMMDD-HHMMSS suffix before they
-#   are replaced, so you can always diff or restore.
+#   are saved next to themselves with a .bak.YYYYMMDD-HHMMSS suffix only when the
+#   replacement content actually differs (no churn for unchanged files), and only
+#   the 3 most recent backups per file are kept.
 #
 # Optional flags:
 #   --service          also reinstall /etc/systemd/system/lp700-server.service
@@ -116,6 +117,21 @@ set -euo pipefail
 echo "host: $(hostname) — kernel: $(uname -r)"
 TS="$(date +%Y%m%d-%H%M%S)"
 
+# backup_if_changed PATH NEW_CONTENT_PATH — copy PATH to PATH.bak.$TS only
+# when the file differs from NEW_CONTENT_PATH (no churn for unchanged files).
+# Always prunes any pre-existing .bak.* backups for PATH down to the 3 most
+# recent, so historical accumulation gets tidied on every run.
+backup_if_changed() {
+  local target="$1" new="$2"
+  if [ -f "$target" ] && ! sudo cmp -s "$target" "$new"; then
+    sudo cp -p "$target" "$target.bak.$TS"
+    echo "  backed up: $target.bak.$TS"
+  fi
+  # Prune: keep newest 3, delete the rest. Runs every time so old chains
+  # accumulated before this prune logic existed get cleaned up too.
+  sudo bash -c "ls -1t '$target'.bak.* 2>/dev/null | tail -n +4 | xargs -r rm -f"
+}
+
 # ---- bootstrap: ensure user, group membership, service unit ----
 # Idempotent: only acts when something is missing, so this is safe on
 # both first-run and steady-state redeploys.
@@ -166,18 +182,14 @@ HEAD
   if [ "$KEEP_CONFIG" -eq 0 ]; then
     cat <<'HEAD'
 
-# ---- udev rule: backup + replace ----
-if [ -f /etc/udev/rules.d/99-lp700.rules ]; then
-  sudo cp -p /etc/udev/rules.d/99-lp700.rules \
-             "/etc/udev/rules.d/99-lp700.rules.bak.$TS"
-  echo "  backed up: /etc/udev/rules.d/99-lp700.rules.bak.$TS"
-fi
+# ---- udev rule: backup-if-changed + replace ----
+backup_if_changed /etc/udev/rules.d/99-lp700.rules /tmp/99-lp700.rules
 sudo install -m 0644 -o root -g root /tmp/99-lp700.rules /etc/udev/rules.d/99-lp700.rules
 sudo udevadm control --reload-rules
 sudo udevadm trigger
 rm -f /tmp/99-lp700.rules
 
-# ---- config.toml: backup + replace, preserving meter.vendor_id / product_id ----
+# ---- config.toml: backup-if-changed + replace, preserving meter.vendor_id / product_id ----
 sudo install -d -m 0755 /etc/lp700-server
 USER_VID_LINE=""
 USER_PID_LINE=""
@@ -192,9 +204,6 @@ if [ -f /etc/lp700-server/config.toml ]; then
     /^[[:space:]]*\[/ { in_meter=0 }
     in_meter && /^[[:space:]]*product_id[[:space:]]*=/ { print; exit }
   ' /etc/lp700-server/config.toml)"
-  sudo cp -p /etc/lp700-server/config.toml \
-             "/etc/lp700-server/config.toml.bak.$TS"
-  echo "  backed up: /etc/lp700-server/config.toml.bak.$TS"
   [ -n "$USER_VID_LINE" ] && echo "  preserving meter.vendor_id: $USER_VID_LINE"
   [ -n "$USER_PID_LINE" ] && echo "  preserving meter.product_id: $USER_PID_LINE"
 fi
@@ -211,6 +220,7 @@ awk -v vid="$USER_VID_LINE" -v pid="$USER_PID_LINE" '
   }
   { print }
 ' /tmp/config.example.toml > "$TMP_NEW"
+backup_if_changed /etc/lp700-server/config.toml "$TMP_NEW"
 sudo install -m 0644 -o root -g root "$TMP_NEW" /etc/lp700-server/config.toml
 rm -f "$TMP_NEW" /tmp/config.example.toml
 HEAD
