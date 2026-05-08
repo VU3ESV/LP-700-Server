@@ -251,8 +251,11 @@
     if (!data.alarm_enabled) { alarm.className = "alarm off"; alarm.textContent = "Disabled"; }
     else if (data.alarm_tripped) { alarm.className = "alarm tripped"; alarm.textContent = "TRIPPED"; }
     else { alarm.className = "alarm armed"; alarm.textContent = "Armed"; }
-    $("alarmPower").textContent = (data.alarm_power_w ?? 0).toFixed(0) + " W";
-    $("alarmSwr").textContent = (data.alarm_swr ?? 0).toFixed(2);
+    // Numeric thresholds aren't yet decoded from the wire (the IN report
+    // beyond offset 34 isn't fully mapped). Show — until we locate them
+    // rather than misleading 0 W / 0.00 placeholders.
+    $("alarmPower").textContent = data.alarm_power_w > 0 ? data.alarm_power_w.toFixed(0) + " W" : "—";
+    $("alarmSwr").textContent = data.alarm_swr > 0 ? data.alarm_swr.toFixed(2) : "—";
 
     // Channel buttons
     const row = $("channelRow");
