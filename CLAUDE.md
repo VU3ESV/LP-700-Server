@@ -134,11 +134,23 @@ The decoder fills in: `Channel`, `AutoChannel`, `Range`, `TopMode`,
 fields (BG_*, scope/spec/FFT) aren't surfaced in the v1 web client because
 v1 mirrors only the Power/SWR display.
 
-**Still unknown (not in the DataLogger's IN-report dump):**
+**Confirmed not in the periodic poll response:**
 callsign, coupler model, firmware revision, alarm power threshold (W),
-alarm SWR threshold (numeric, vs the index at offset 9). The simulator
-populates these so the wire shape stays stable; the real decoder leaves
-them at zero/empty until we find them in a separate "get setup" report.
+alarm SWR threshold, AL/SWR activation threshold. Verified by a clean
+diff on 2026-05-08: changing only the SWR Alarm CH1 from 1.5 → 2.0
+on the meter LCD produced **byte-identical** IN reports before and
+after. Same result is expected for Pwr Alarm.
+
+These values are stored in the meter's NVRAM and shown on the LCD but
+**the firmware doesn't transmit them in response to the standard `'0'`
+poll**. To surface them in the server we'd need to:
+- find an undocumented OUT command that returns a setup block, OR
+- USB-sniff the Telepost VM's traffic to learn what it sends.
+
+Until then, the snapshot's `AlarmPowerW`, `AlarmSWR`, `Callsign`,
+`Coupler`, `FirmwareRev` fields stay zero/empty when reading real
+frames; the simulator populates them so the wire shape is stable for
+clients. The web UI shows "—" instead of misleading "0 W / 0.00".
 
 ### OUT-report control bytes (DataLogger button map)
 
