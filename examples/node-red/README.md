@@ -20,9 +20,15 @@ read at once and any of them can issue control verbs.
 
 ```
 examples/node-red/
-├── lp700-websocket-flow.json   ← importable flow (18 nodes, one tab)
+├── lp700-websocket-flow.json   ← clean importable flow (18 nodes, gateway + 7 control buttons; no dashboard)
+├── LP700.json                  ← KD4Z's flow already migrated in-place (58 nodes; full Power/SWR dashboard)
 └── README.md                   ← this file
 ```
+
+Pick one:
+
+- **Starting from scratch** → import `lp700-websocket-flow.json`. Wire its `lp700-telemetry` link-out into whatever dashboard you build.
+- **Already running KD4Z's HID-DIRECT flow** → import `LP700.json`. It is *the same* KD4Z flow with the HID nodes removed and the WebSocket gateway wired in their place; all dashboard widgets, the Peak-Hold timer, the channel / range labels, and the rbe filters are untouched, so the dashboard tab `LB9KJ Shack Control` lights up the moment the WebSocket URL is configured.
 
 ## Importing
 
@@ -48,16 +54,19 @@ Logic → …` chain. The `msg.payload` keys match (see below).
 
 ## Migrating from KD4Z's HID-Direct flow
 
-If you're coming from KD4Z's *LP-500/700 HID DIRECT v1.2* flow on tab
-`a65f1d125d17f35a`, the migration is delete-3 / wire-1:
+The shipped `LP700.json` is already the result of doing this on the
+canonical KD4Z flow, but if you have a hand-customised version of the
+flow that you want to migrate yourself, here is the exact set of edits.
+On tab `a65f1d125d17f35a`:
 
 | Action | Nodes affected                                                |
 |--------|---------------------------------------------------------------|
 | Delete | `getHIDdevices`, `HIDdevice (HID-LP)`, `HIDConfig (LP-500-LP-700)` — the direct USB plumbing |
-| Delete | `Poll Meter Values`, `LP Dice and Slice` — replaced by the new tab |
-| Delete | `Peak Reset Command`, `Change Channel`, `Change Range` — replaced by the inject buttons on the new tab (or you can keep yours and rewire them to the new `ws://lp700-server/ws` *out* node, with `msg.payload` set to the JSON command string — see below) |
-| Keep   | Everything downstream: `Peak Hold Logic`, `Set CH Label`, `Set Range Label`, `to KW if needed`, `Zero meters`, `Meter Range`, all dashboard nodes |
-| Add    | One `link in` node named `lp700-telemetry` feeding into the head of the kept chain |
+| Delete | `Poll Meter Values`, `LP Dice and Slice`, the `inject(Poll Devices)` button, the `trigger` that drove the poll, and any unwired-debug node downstream of `getHIDdevices` |
+| Keep   | Everything downstream: `Peak Hold Logic` (×2), `Set CH Label`, `Set  Range Label`, `to KW if needed` (×2), `Zero meters`, `Meter Range`, the 6 `rbe` nodes (`power_avg` / `power_peak` / `swr` / `scale` / `mode` / `channel` / `range`), all dashboard nodes |
+| Replace function bodies | `Change Channel` → `msg.payload = JSON.stringify({type:'command', action:'channel_step'})`. `Change Range` → same with `range_step`. (The `link out → link in → ws out` routing stays.) |
+| Repurpose | The unnamed `link in` that used to feed `HIDdevice` — rename it `lp700-ws-out` and wire it to a new `websocket out` node instead. |
+| Add    | A new `websocket-client` config (URL: `ws://<pi-host>:8089/ws`), a `websocket in` feeding a new `Parse WS frame` function, and a `Reshape (KD4Z-compatible)` function that maps the server's parsed telemetry frame back to KD4Z's flat `msg.power_avg / power_peak / swr / scale / mode / channel / range` shape. Wire `Reshape` into the existing 6 rbe nodes plus the `Parsed Data` debug. |
 
 ## Output shape (link-out: `lp700-telemetry`)
 
