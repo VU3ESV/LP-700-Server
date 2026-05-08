@@ -196,8 +196,11 @@ func (o *HIDOwner) runOnce(ctx context.Context) error {
 			// quiet journal because the level defaults to error.
 			o.logger.Debug("frame",
 				"channel", snap.Channel,
+				"auto_channel", snap.AutoChannel,
 				"power_avg_w", snap.PowerAvgW,
 				"power_peak_w", snap.PowerPeakW,
+				"peak_hold_w", snap.PeakHoldW,
+				"peak_mode", snap.PeakMode,
 				"swr", snap.SWR,
 				"range", snap.Range,
 				"status", snap.StatusMessage,
