@@ -47,6 +47,14 @@ const (
 // Source: LP-500_DataLogger `FrmSetup.frm:303-339` (vendor archive;
 // see CLAUDE.md for URL).
 const (
+	// Bytes 0-1: Peak HOLD power (firmware-maintained max-hold), 16-bit
+	// BE × 0.2 W. The DataLogger source labelled this "Pk Pwr Hi byte"
+	// at InputReportData(1) — confirmed mislabelled by the LP-500_VM
+	// v1.080 binary, which dumps the same position as "Pk HLD_Pwr Hi
+	// byte =" right next to a separate "Pk Pwr Hi byte =" label for
+	// the live-peak field at offset 23.
+	OffsetPeakHoldHi  = 0
+	OffsetPeakHoldLo  = 1
 	OffsetSWRHi       = 2 // 16-bit BE, split with OffsetSWRLo (Node-RED-derived)
 	OffsetTopMode     = 3 // 0=Power/SWR, 1=Waveform, 2=Spectrum, 3=Setup
 	OffsetChannel     = 4 // 0=Auto, 1..4=CH1..CH4
@@ -55,7 +63,7 @@ const (
 	OffsetAlarm       = 7 // 0=off, non-zero=on
 	OffsetPeakAvg     = 8 // 0=peak_hold, 1=average, 2=tune
 	OffsetAlarmSet    = 9 // alarm setpoint index (encoding TBD)
-	OffsetPeakPwrHi   = 23
+	OffsetPeakPwrHi   = 23 // 16-bit BE × 0.2 W — *live* envelope peak this poll cycle
 	OffsetPeakPwrLo   = 24
 	OffsetAvgPwrHi    = 25
 	OffsetAvgPwrLo    = 26
@@ -100,20 +108,38 @@ func Decode(report []byte) (Snapshot, error) {
 
 	// The firmware emits an ack/echo frame after every OUT command:
 	// byte[0] = the command character we wrote (e.g. 0x30 for poll),
-	// byte[1..63] = 0. Real telemetry frames always have byte[0] = 0.
-	// Skip the echoes — without this, the decoder conflates them with
-	// telemetry and produces nonsense (alternating range=auto/5W in
-	// what should be a steady-state log).
-	if report[0] != 0 {
-		return Snapshot{}, errSkipFrame
+	// bytes [1..63] = 0. We can't filter on `byte[0] != 0` alone — that
+	// also drops legitimate telemetry whenever the Peak-HOLD high byte
+	// at offset 0 is non-zero (i.e. any held peak above 51.2 W). Match
+	// the exact echo pattern instead: byte[0] is in the cmd-char range
+	// AND every byte after it is zero.
+	if report[0] >= '0' && report[0] <= '?' {
+		echo := true
+		for i := 1; i < ReportSize; i++ {
+			if report[i] != 0 {
+				echo = false
+				break
+			}
+		}
+		if echo {
+			return Snapshot{}, errSkipFrame
+		}
 	}
 
 	s := Snapshot{Timestamp: time.Now().UTC()}
 
 	// Power: big-endian unsigned 16-bit, scale = ×0.2 W (raw * 2 / 10
 	// per the Node-RED `LP Dice and Slice` function).
+	//
+	// Two distinct fields:
+	//   bytes 0-1   → PeakHoldW (firmware-maintained max-hold; what
+	//                 the LCD shows in Peak Hold mode)
+	//   bytes 23-24 → PowerPeakW (envelope peak for this poll cycle;
+	//                 decays the moment the rig is unkeyed)
+	rawPeakHold := binary.BigEndian.Uint16(report[OffsetPeakHoldHi : OffsetPeakHoldHi+2])
 	rawPeak := binary.BigEndian.Uint16(report[OffsetPeakPwrHi : OffsetPeakPwrHi+2])
 	rawAvg := binary.BigEndian.Uint16(report[OffsetAvgPwrHi : OffsetAvgPwrHi+2])
+	s.PeakHoldW = float64(rawPeakHold) * 0.2
 	s.PowerPeakW = float64(rawPeak) * 0.2
 	s.PowerAvgW = float64(rawAvg) * 0.2
 

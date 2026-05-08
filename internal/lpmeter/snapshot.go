@@ -14,12 +14,13 @@ import "time"
 // JSON tags define the wire shape sent to clients.
 //
 // Fields the wire decoder fills in from real frames (Node-RED-grounded):
-//   - Channel, AutoChannel, PowerAvgW, PowerPeakW, SWR, Range, TopMode
+//   - Channel, AutoChannel, PowerAvgW, PowerPeakW, PeakHoldW, SWR,
+//     Range, TopMode, PeakMode, AlarmEnabled
 //
 // Fields the simulator fills in but the wire decoder leaves at zero
 // (offsets not yet known — see CLAUDE.md):
-//   - PeakHoldW, PeakMode, PowerMode, AlarmEnabled, AlarmPowerW,
-//     AlarmSWR, AlarmTripped, Callsign, Coupler, FirmwareRev
+//   - PowerMode, AlarmPowerW, AlarmSWR, AlarmTripped,
+//     Callsign, Coupler, FirmwareRev
 //
 // The wire shape is stable: clients always see the same JSON keys
 // whether they're connected to a real meter or the simulator. They just

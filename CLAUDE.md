@@ -118,6 +118,8 @@ Offsets used by the decoder:
 
 | offset | field             | encoding                                                          |
 |-------:|-------------------|-------------------------------------------------------------------|
+|     0  | Peak HOLD Hi      | BE u16; `watts = raw * 0.2`. Firmware-maintained max-hold (what the LCD shows in Peak Hold mode); the DataLogger source mislabelled this as "Pk Pwr" — disambiguated by LP-500_VM v1.080 which dumps the same position as "Pk HLD_Pwr Hi byte =". |
+|     1  | Peak HOLD Lo      |                                                                   |
 |     2  | SWR high byte     | 16-bit BE split with offset 37; `swr = ((hi<<8) \| lo) / 100`     |
 |     3  | top mode          | 0=Power/SWR, 1=Waveform, 2=Spectrum, 3=Setup                      |
 |     4  | active channel    | 0=Auto, 1..4=CH1..CH4                                             |
@@ -125,7 +127,7 @@ Offsets used by the decoder:
 |     6  | range index       | 0..10 = 5W..10KW, 11 = Auto                                       |
 |     7  | alarm enable      | 0=off, non-zero=on                                                |
 |     8  | peak/avg/tune     | 0=Peak Hold, 1=Average, 2=Tune (verified on bench)                |
-|    23  | Peak power Hi     | BE u16; `watts = raw * 0.2`                                       |
+|    23  | Peak power Hi     | BE u16; `watts = raw * 0.2`. *Live* envelope peak this poll cycle; decays the moment the rig is unkeyed. (Distinct from offset 0-1's firmware-maintained Peak HOLD.) |
 |    24  | Peak power Lo     |                                                                   |
 |    25  | Avg power Hi      | BE u16; `watts = raw * 0.2`                                       |
 |    26  | Avg power Lo      |                                                                   |

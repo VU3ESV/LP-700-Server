@@ -14,6 +14,7 @@ func buildSyntheticFrame(s Snapshot) []byte {
 	// Power: scale=×0.2W → raw = watts * 5.
 	binary.BigEndian.PutUint16(r[OffsetAvgPwrHi:], uint16(s.PowerAvgW/0.2))
 	binary.BigEndian.PutUint16(r[OffsetPeakPwrHi:], uint16(s.PowerPeakW/0.2))
+	binary.BigEndian.PutUint16(r[OffsetPeakHoldHi:], uint16(s.PeakHoldW/0.2))
 
 	// SWR: split bytes, scale=/100.
 	rawSWR := uint16(s.SWR * 100)
@@ -179,6 +180,57 @@ func TestEncodeCommandLayout(t *testing.T) {
 		if out[0] != want {
 			t.Errorf("%s: byte[0]=0x%02x, want 0x%02x", verb, out[0], want)
 		}
+	}
+}
+
+// TestDecodePeakHold is the regression for "Peak Hold not working in
+// the web UI" — bytes 0-1 carry the firmware-maintained held peak.
+// The old decoder both ignored those bytes (always read live peak from
+// 23-24) and dropped the entire frame whenever byte[0] != 0, which
+// silently lost telemetry above 51.2 W of held peak.
+func TestDecodePeakHold(t *testing.T) {
+	// 250 W held peak: raw 1250 = 0x04E2 → bytes 0-1 = 0x04 0xE2.
+	r := buildSyntheticFrame(Snapshot{
+		Channel: 1, Range: "1K", SWR: 1.10,
+		PowerAvgW: 100, PowerPeakW: 140, PeakHoldW: 250,
+	})
+	got, err := Decode(r)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !floatNear(got.PeakHoldW, 250, 0.2) {
+		t.Errorf("peak hold: got %v, want 250 (bytes 0-1 must decode independently of bytes 23-24)", got.PeakHoldW)
+	}
+	if !floatNear(got.PowerPeakW, 140, 0.2) {
+		t.Errorf("live peak: got %v, want 140", got.PowerPeakW)
+	}
+	// Sanity: byte[0] is 0x04 here. The old filter would have dropped
+	// this frame; the new filter must let it through.
+	if r[0] == 0 {
+		t.Fatalf("test frame setup wrong: byte[0]=0, expected non-zero peak-hold high byte")
+	}
+}
+
+func TestDecodeRejectsCommandEcho(t *testing.T) {
+	// Real command echo: cmd char at byte 0, every other byte 0.
+	for _, cmd := range []byte{'0', '6', '7', '8', '9', ':', ';', '<', '?'} {
+		r := make([]byte, ReportSize)
+		r[0] = cmd
+		_, err := Decode(r)
+		if !IsSkippable(err) {
+			t.Errorf("cmd echo 0x%02x: expected skippable, got err=%v", cmd, err)
+		}
+	}
+	// Real telemetry frame whose byte[0] happens to be in the cmd-char
+	// range (high byte of a large peak-hold value) must NOT be skipped.
+	r := buildSyntheticFrame(Snapshot{
+		Channel: 1, Range: "1K", SWR: 1.10, PeakHoldW: 2500, // raw 12500 = 0x30D4
+	})
+	if r[0] < '0' || r[0] > '?' {
+		t.Skipf("test setup didn't put a cmd-char in byte[0] (got 0x%02x); reconsider raw value", r[0])
+	}
+	if _, err := Decode(r); err != nil {
+		t.Errorf("real telemetry with cmd-char-shaped peak-hold high byte must decode, got err=%v", err)
 	}
 }
 

@@ -194,12 +194,16 @@
   }
 
   function render(data) {
-    // Avg and Peak are always live in the wire frame regardless of which
-    // mode (Avg/Peak-Hold/Tune) the meter's large numeric display is in,
-    // mirroring the small "57 AV / 94 PK" LCD indicators that are always
-    // visible on the LP-500/700.
+    // Average is always live (mirrors the LCD's `AV` indicator). Peak
+    // is live envelope-peak in Average / Tune mode, but in Peak-Hold
+    // mode we show the firmware-maintained held peak (bytes 0-1 of the
+    // IN frame) so the value sticks after key-up the way the meter LCD
+    // does.
     const [pa, pau] = fmtPower(data.power_avg_w);
-    const [pp, ppu] = fmtPower(data.power_peak_w);
+    const peakW = data.peak_mode === "peak_hold"
+        ? (data.peak_hold_w || data.power_peak_w)
+        : data.power_peak_w;
+    const [pp, ppu] = fmtPower(peakW);
     $("powerAvg").textContent = pa; $("powerAvgUnit").textContent = pau;
     $("powerPeak").textContent = pp; $("powerPeakUnit").textContent = ppu;
     $("swr").textContent = (data.swr ?? 0).toFixed(2);

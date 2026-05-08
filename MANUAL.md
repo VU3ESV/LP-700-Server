@@ -40,16 +40,17 @@ showing, updated several times a second.
 | **live** / disconnected | Connection state to the WebSocket. Green = receiving frames; yellow = reconnecting; red = error.            |
 | Setup (top-right)      | Opens the runtime settings overlay (see [§4](#4-runtime-settings-setup-overlay)).                            |
 | Average power          | Average forward power in watts (the meter's `AV` reading).                                                   |
-| Peak power             | Live peak-envelope power in watts (the meter's `PK` reading).                                                |
+| Peak power             | In **Peak Hold** mode, the firmware-maintained held peak (sticks at the maximum until the meter clears it). In **Average** or **Tune** mode, the live envelope peak this poll cycle. Mirrors the meter's `PK` reading. |
 | SWR                    | Standing-wave ratio, floor 1.00.                                                                             |
 | Alarm                  | Disabled / Armed / **TRIPPED**. Click to toggle enable/disable.                                              |
 | Channel                | `CH Auto` (meter picks 1..4) or one of `CH 1`–`CH 4`. The active option is highlighted.                      |
 | Range                  | Cycles through `5W`, `10W`, `25W`, `50W`, `100W`, `250W`, `500W`, `1K`, `2.5K`, `5K`, `10K`, `auto`.         |
 | Peak / Avg / Tune      | Display mode for the meter's large numeric area; the active option is highlighted.                           |
 
-Both **Average** and **Peak** are always live regardless of which
-display mode the meter's big numeric area is showing — they mirror the
-small `57 AV / 94 PK` indicators that are always visible on the LCD.
+**Average** is always live (mirrors the LCD's small `AV` indicator).
+**Peak** follows the meter's display mode the way the LCD does: it
+sticks at the held peak in *Peak Hold* mode and tracks the live
+envelope peak in *Average* / *Tune*.
 
 ---
 
@@ -109,7 +110,7 @@ curl -s -XPOST http://<pi-host>:8089/api/log-level -d '{"level":"debug"}'
 | Connection pill is yellow/red          | The page can't reach `/ws`. Confirm the Pi is up (`curl http://<pi-host>:8089/healthz`); check firewall on the Pi or any router AP-isolation between client and Pi. |
 | Page loads, all numbers stay `—` / `0` | Heartbeats keep the pill green but no telemetry is changing. Likely a decoder mismatch with your firmware revision — bump log level to `debug` (Setup overlay), then `journalctl -u lp700-server -f` and look for raw-frame hex; compare against the offset table in [CLAUDE.md](CLAUDE.md). |
 | Buttons don't do anything              | Either `server.allow_control = false` in `/etc/lp700-server/config.toml` (read-only port) or the meter is in Setup mode and ignoring soft-button input. Press **Setup** on the meter LCD to exit. |
-| Peak Power shows 0 W in Average mode   | Peak Power is the live peak envelope — when the radio is unkeyed it is genuinely zero. Key the rig and watch it move. |
+| Peak Power shows 0 W in Average mode   | In Average / Tune mode, Peak Power is the live envelope peak — when the radio is unkeyed it is genuinely zero. Key the rig and watch it move. To see a held maximum, switch to **Peak Hold**. |
 
 For deeper diagnostics see the **probe** subcommand documented in
 [README.md → Diagnostic subcommands](README.md#diagnostic-subcommands).
