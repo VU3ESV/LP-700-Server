@@ -175,11 +175,24 @@ Example status message captured in response to `'6'` while the meter
 showed an SWR alarm: bytes 40..63 read `"Reduce power or lower ra"`
 (truncated by the 64-byte report length).
 
-**Setup data we still can't get:** alarm thresholds, callsign, coupler
-model, firmware revision did not appear in the captured 5500+ frames.
-Possible reasons: the VM may only fetch them at startup outside the
-captured window, or they're embedded within the scope/spec sample
-buffers in some encoded form that this analysis didn't crack.
+**Setup data we cannot retrieve over USB (definitive):** alarm Pwr/SWR
+thresholds, callsign, coupler model, firmware revision. None of these
+appeared in any of the 5500+ HID frames in the capture, in any
+plausible encoding (BE/LE 16-bit, 8-bit /10 or /14 scaling, ASCII).
+Endpoint 0x82 isn't used by the LP-700; no control-transfer traffic
+to/from the device. The manufacturer's own DataLogger source
+(`FrmSetup.frm`) reads bytes 1..35 of each response and labels none
+of those as alarm thresholds either — so the firmware genuinely does
+not expose these values via the USB HID interface.
+
+These values are stored in the meter's NVRAM and shown only on the
+LCD. The web UI's Alarm panel surfaces the enable/tripped state (which
+*is* in the wire) and points the user to the meter LCD for the
+numeric setpoints. The Snapshot fields `AlarmPowerW`, `AlarmSWR`,
+`Callsign`, `Coupler`, `FirmwareRev` remain in the JSON wire shape
+for forward compatibility (and the simulator populates them), but the
+real decoder leaves them at zero/empty and the web UI no longer shows
+threshold rows.
 
 ### OUT-report control bytes (DataLogger button map)
 
