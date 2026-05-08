@@ -8,6 +8,7 @@
 *.swp
 .idea/
 .vscode/
+.claude/
 
 # Local config / fixtures captured from real hardware (often per-user)
 /config.toml

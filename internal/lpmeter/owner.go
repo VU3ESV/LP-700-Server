@@ -7,8 +7,6 @@ import (
 	"log/slog"
 	"strings"
 	"time"
-
-	"github.com/karalabe/hid"
 )
 
 // Backend tags the source of telemetry (helpful for the web client to
@@ -29,7 +27,8 @@ type Source interface {
 	// reconnect on disconnect; simulator never errors).
 	Run(ctx context.Context)
 	// Submit queues a control verb for the next interleave slot.
-	// Returns false if the queue is full so callers can NACK.
+	// Returns false if the queue is full or the verb is unknown so
+	// callers can NACK.
 	Submit(verb string, value int) bool
 	// Backend identifies which implementation is running.
 	Backend() Backend
@@ -110,12 +109,13 @@ func (o *HIDOwner) runOnce(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("find device: %w", err)
 	}
-	dev, err := info.Open()
+	dev, err := openHID(info)
 	if err != nil {
-		return fmt.Errorf("open %04x:%04x: %w", info.VendorID, info.ProductID, err)
+		return fmt.Errorf("open: %w", err)
 	}
 	defer dev.Close()
 	o.logger.Info("hid open",
+		"path", info.Path,
 		"vendor_id", fmt.Sprintf("0x%04x", info.VendorID),
 		"product_id", fmt.Sprintf("0x%04x", info.ProductID),
 		"product", info.Product,
@@ -123,7 +123,7 @@ func (o *HIDOwner) runOnce(ctx context.Context) error {
 
 	// Reads block in a goroutine so the main loop can still drain
 	// commands even when the device is silent. The read goroutine
-	// closes its channel on error to signal the main loop to bail.
+	// signals the main loop to bail by sending its error.
 	frames := make(chan []byte, 4)
 	readErr := make(chan error, 1)
 	go func() {
@@ -135,8 +135,10 @@ func (o *HIDOwner) runOnce(ctx context.Context) error {
 				return
 			}
 			if n != ReportSize {
-				// Skip mis-sized reports; karalabe/hid normally
-				// returns full 64-byte buffers for vendor HIDs.
+				// hidraw on Linux can return shorter reads
+				// when the device sends a smaller report than
+				// our buffer (very unusual for vendor HIDs).
+				// Skip rather than mis-parse.
 				continue
 			}
 			frame := make([]byte, ReportSize)
@@ -168,7 +170,7 @@ func (o *HIDOwner) runOnce(ctx context.Context) error {
 				if IsSkippable(err) {
 					continue
 				}
-				o.logger.Debug("decode error", "err", err, "raw", fmt.Sprintf("%x", frame[:min(16, len(frame))]))
+				o.logger.Debug("decode error", "err", err, "raw", fmt.Sprintf("%x", frame[:minInt(16, len(frame))]))
 				continue
 			}
 			o.logger.Debug("frame",
@@ -198,7 +200,7 @@ func (o *HIDOwner) runOnce(ctx context.Context) error {
 // drainCommands writes any queued control verbs as 64-byte OUT reports
 // with a short post-write settle so the meter can fully process each
 // before the next.
-func (o *HIDOwner) drainCommands(dev *hid.Device) error {
+func (o *HIDOwner) drainCommands(dev hidDevice) error {
 	const postWriteSettle = 50 * time.Millisecond
 	for {
 		select {
@@ -219,29 +221,27 @@ func (o *HIDOwner) drainCommands(dev *hid.Device) error {
 	}
 }
 
-// writeReport sends a 64-byte HID OUT report. karalabe/hid (and hidapi
-// underneath) expects the first byte of the buffer to be the Report ID
-// — the LP-500/700's mikroE HID stack uses no Report IDs, so we
-// prepend a 0x00 to make a 65-byte buffer where bytes [1..] are the
-// 64-byte payload.
-func writeReport(dev *hid.Device, payload []byte) error {
+// writeReport sends a 64-byte HID OUT report. The Linux hidraw driver
+// expects the first byte of the buffer to be the Report ID — the
+// LP-500/700's mikroE HID stack uses no Report IDs, so we prepend a
+// 0x00 to make a 65-byte buffer where bytes [1..] are the 64-byte
+// payload.
+func writeReport(dev hidDevice, payload []byte) error {
 	buf := make([]byte, 1+len(payload))
 	copy(buf[1:], payload)
 	_, err := dev.Write(buf)
 	return err
 }
 
-func (o *HIDOwner) findDevice() (hid.DeviceInfo, error) {
-	devices := hid.Enumerate(o.vendorID, o.productID)
-	if len(devices) == 0 && (o.vendorID != 0 || o.productID != 0) {
-		// Fall through to a global scan so the user can configure
-		// vendor_id/product_id and still benefit from the
-		// product-string fallback when the IDs don't match.
-		devices = hid.Enumerate(0, 0)
+func (o *HIDOwner) findDevice() (hidDeviceInfo, error) {
+	devices, err := enumerateHID()
+	if err != nil {
+		return hidDeviceInfo{}, fmt.Errorf("enumerate: %w", err)
 	}
 	if len(devices) == 0 {
-		return hid.DeviceInfo{}, errors.New("no HID devices enumerable (try `lp700-server probe -list`)")
+		return hidDeviceInfo{}, errors.New("no HID devices enumerable (try `lp700-server probe -list`)")
 	}
+	// Match by VID:PID first when both are configured.
 	if o.vendorID != 0 && o.productID != 0 {
 		for _, d := range devices {
 			if d.VendorID == o.vendorID && d.ProductID == o.productID {
@@ -254,7 +254,7 @@ func (o *HIDOwner) findDevice() (hid.DeviceInfo, error) {
 			return d, nil
 		}
 	}
-	return hid.DeviceInfo{}, errors.New("no LP-500/LP-700 found in HID enumeration")
+	return hidDeviceInfo{}, errors.New("no LP-500/LP-700 found in HID enumeration")
 }
 
 func isLPMeter(product string) bool {
@@ -263,7 +263,7 @@ func isLPMeter(product string) bool {
 		strings.Contains(p, "LP500") || strings.Contains(p, "LP700")
 }
 
-func min(a, b int) int {
+func minInt(a, b int) int {
 	if a < b {
 		return a
 	}

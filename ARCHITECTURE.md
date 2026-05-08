@@ -274,9 +274,11 @@ maintainer has bench time with a meter and a USB sniffer.
   instances on different ports.
 - **Read-only mode** — shipped as `server.allow_control = false`. When set,
   control verbs are NACKed with `"control disabled"`.
-- **Cross-compile cost** — `karalabe/hid` is CGO. The release workflow
-  installs a Linux ARM64/ARMv7 cross gcc on the runner. Native builds on
-  the Pi work with `apt-get install libudev-dev libusb-1.0-0-dev`.
+- **Cross-compile cost** — none. The HID layer is pure Go (`/dev/hidraw`
+  + sysfs on Linux); macOS and Windows builds emit a stub that errors
+  on `openHID` and fall back to the simulator backend. The release
+  workflow cross-compiles every supported target from a single
+  `ubuntu-latest` runner with no toolchain setup.
 
 ## 10. Out of scope, explicitly
 

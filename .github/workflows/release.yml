@@ -8,6 +8,10 @@ name: Release
 # Manual dispatch is also supported (Actions tab → Release → Run
 # workflow), in case you want to ship a tag that's already been pushed,
 # or you want to re-cut the artifacts after a pipeline fix.
+#
+# Pure-Go build: HID is implemented via /dev/hidraw on Linux, so no
+# CGO / cross-toolchain is needed. Single ubuntu-latest runner cross-
+# compiles every target.
 
 on:
   push:
@@ -52,70 +56,21 @@ jobs:
           go-version: '1.22'
           cache: true
 
-      - name: Install Linux + cross toolchains
-        run: |
-          set -euo pipefail
-          sudo dpkg --add-architecture arm64
-          sudo dpkg --add-architecture armhf
-          # Restrict the new architectures to ports.ubuntu.com so apt
-          # doesn't try to fetch arm64/armhf packages from the amd64
-          # mirrors (which 404 and break apt-get update).
-          sudo sed -i 's|^deb |deb [arch=amd64] |' /etc/apt/sources.list || true
-          sudo tee /etc/apt/sources.list.d/arm-ports.list >/dev/null <<'EOF'
-          deb [arch=arm64,armhf] http://ports.ubuntu.com/ubuntu-ports jammy main universe
-          deb [arch=arm64,armhf] http://ports.ubuntu.com/ubuntu-ports jammy-updates main universe
-          deb [arch=arm64,armhf] http://ports.ubuntu.com/ubuntu-ports jammy-security main universe
-          EOF
-          sudo apt-get update
-          sudo apt-get install -y \
-            pkg-config build-essential \
-            gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf \
-            libudev-dev libusb-1.0-0-dev \
-            libudev-dev:arm64 libusb-1.0-0-dev:arm64 \
-            libudev-dev:armhf libusb-1.0-0-dev:armhf
-
-      - name: Build Linux binaries (CGO)
+      - name: Build binaries
         env:
-          CGO_ENABLED: '1'
+          CGO_ENABLED: '0'
           LDFLAGS: '-s -w'
         run: |
           set -euo pipefail
           mkdir -p dist
-
-          # amd64 native
-          GOOS=linux GOARCH=amd64 \
-            go build -trimpath -ldflags="$LDFLAGS" -o dist/lp700-server-linux-amd64 .
-
-          # arm64 cross
-          GOOS=linux GOARCH=arm64 CC=aarch64-linux-gnu-gcc \
-            PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig \
-            go build -trimpath -ldflags="$LDFLAGS" -o dist/lp700-server-linux-arm64 .
-
-          # armv7 cross
-          GOOS=linux GOARCH=arm GOARM=7 CC=arm-linux-gnueabihf-gcc \
-            PKG_CONFIG_PATH=/usr/lib/arm-linux-gnueabihf/pkgconfig \
-            go build -trimpath -ldflags="$LDFLAGS" -o dist/lp700-server-linux-armv7 .
-
-      - name: Build Windows + macOS (no CGO needed for HID? — fall back to placeholders)
-        # The HID library uses CGO for all platforms, so cross-compiling
-        # Windows from Linux requires mingw-w64 and macOS requires the
-        # Xcode toolchain. To keep this workflow lean we ship Windows
-        # via mingw and skip macOS cross-builds (a separate `darwin`
-        # job handles that — see below).
-        env:
-          CGO_ENABLED: '1'
-          LDFLAGS: '-s -w'
-        run: |
-          set -euo pipefail
-          sudo apt-get install -y gcc-mingw-w64-x86-64
-          GOOS=windows GOARCH=amd64 CC=x86_64-w64-mingw32-gcc \
-            go build -trimpath -ldflags="$LDFLAGS" -o dist/lp700-server-windows-amd64.exe .
-
-      - name: Checksum
-        run: |
-          cd dist
-          sha256sum lp700-server-* > SHA256SUMS
-          ls -la
+          GOOS=linux   GOARCH=amd64           go build -trimpath -ldflags="$LDFLAGS" -o dist/lp700-server-linux-amd64 .
+          GOOS=linux   GOARCH=arm64           go build -trimpath -ldflags="$LDFLAGS" -o dist/lp700-server-linux-arm64 .
+          GOOS=linux   GOARCH=arm   GOARM=7   go build -trimpath -ldflags="$LDFLAGS" -o dist/lp700-server-linux-armv7 .
+          GOOS=darwin  GOARCH=amd64           go build -trimpath -ldflags="$LDFLAGS" -o dist/lp700-server-darwin-amd64 .
+          GOOS=darwin  GOARCH=arm64           go build -trimpath -ldflags="$LDFLAGS" -o dist/lp700-server-darwin-arm64 .
+          GOOS=windows GOARCH=amd64           go build -trimpath -ldflags="$LDFLAGS" -o dist/lp700-server-windows-amd64.exe .
+          (cd dist && sha256sum lp700-server-* > SHA256SUMS)
+          ls -la dist/
 
       - name: Create release
         env:
@@ -123,59 +78,12 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="${{ steps.ver.outputs.version }}"
-          # The Linux+Windows binaries are uploaded by this job. macOS
-          # binaries are uploaded by the parallel darwin job.
           if gh release view "$VERSION" >/dev/null 2>&1; then
             gh release upload "$VERSION" dist/* --clobber
           else
             gh release create "$VERSION" \
+              --target "${{ github.sha }}" \
               --title "$VERSION" \
               --generate-notes \
               dist/*
           fi
-
-  darwin:
-    name: build macOS
-    runs-on: macos-14
-    needs: release
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.22'
-          cache: true
-
-      - name: Resolve version
-        id: ver
-        run: |
-          set -euo pipefail
-          if [ -n "${{ inputs.version }}" ]; then
-            VERSION="${{ inputs.version }}"
-          else
-            VERSION="${GITHUB_REF#refs/tags/}"
-          fi
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Build darwin binaries
-        env:
-          CGO_ENABLED: '1'
-          LDFLAGS: '-s -w'
-        run: |
-          set -euo pipefail
-          mkdir -p dist
-          GOOS=darwin GOARCH=arm64 \
-            go build -trimpath -ldflags="$LDFLAGS" -o dist/lp700-server-darwin-arm64 .
-          GOOS=darwin GOARCH=amd64 \
-            go build -trimpath -ldflags="$LDFLAGS" -o dist/lp700-server-darwin-amd64 .
-          shasum -a 256 dist/lp700-server-darwin-* > dist/SHA256SUMS-darwin
-
-      - name: Upload darwin assets
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          VERSION="${{ steps.ver.outputs.version }}"
-          gh release upload "$VERSION" dist/lp700-server-darwin-amd64 dist/lp700-server-darwin-arm64 dist/SHA256SUMS-darwin --clobber

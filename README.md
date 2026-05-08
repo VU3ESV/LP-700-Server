@@ -37,22 +37,9 @@ go run . -backend simulator -config deploy/config.example.toml
 The reference web client is embedded in the binary — no separate frontend
 build step.
 
-## Building on the Pi (natively)
+## Building for Raspberry Pi
 
-The HID library is CGO. The simplest path is to build on the Pi itself:
-
-```sh
-sudo apt-get install -y golang libudev-dev libusb-1.0-0-dev pkg-config build-essential
-git clone https://github.com/VU3ESV/LP-700-Server.git
-cd LP-700-Server
-go build -trimpath -ldflags="-s -w" -o lp700-server .
-sudo ./deploy/install.sh ./lp700-server
-```
-
-If your distro's Go is too old for `go.mod`, install a recent toolchain from
-<https://go.dev/dl/> instead of `apt`.
-
-## Cross-building from a dev machine
+From any dev machine with Go installed (Mac, Linux, or WSL):
 
 ```sh
 # Pi 3/4/5 with 64-bit Raspberry Pi OS (recommended):
@@ -64,10 +51,9 @@ ARCH=arm ./deploy/build-pi.sh
 # -> dist/lp700-server-linux-armv7
 ```
 
-Cross-compilation needs an ARM C toolchain (the script installs / probes
-for `aarch64-linux-gnu-gcc` and `arm-linux-gnueabihf-gcc`). On macOS this
-typically means `brew install aarch64-elf-gcc messense/macos-cross-toolchains/aarch64-unknown-linux-gnu`,
-or just use the **on-Pi build** above which avoids the toolchain dance.
+The HID layer is pure Go (`/dev/hidraw` + sysfs), so no CGO toolchain is
+needed — `GOOS=linux GOARCH=arm64 go build` works with whatever Go you
+already have.
 
 ## CI / releases
 
@@ -97,7 +83,6 @@ also dispatch the workflow manually from the **Actions** tab — same effect.
 2. SSH in and install:
    ```sh
    ssh pi@raspberrypi.local
-   sudo apt-get install -y libudev1   # runtime dep for the HID layer
    cd ~/lp700
    sudo ./deploy/install.sh ./lp700-server-linux-arm64
    ```

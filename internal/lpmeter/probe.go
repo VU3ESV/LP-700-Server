@@ -7,10 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
 	"time"
-
-	"github.com/karalabe/hid"
 )
 
 // ProbeMode picks one of three diagnostic actions the binary's `probe`
@@ -47,19 +44,22 @@ func RunProbe(ctx context.Context, opts ProbeOptions, w io.Writer) error {
 }
 
 func runList(w io.Writer, opts ProbeOptions) error {
-	devs := hid.Enumerate(opts.VendorID, opts.ProductID)
+	devs, err := enumerateHID()
+	if err != nil {
+		return fmt.Errorf("enumerate: %w", err)
+	}
 	if len(devs) == 0 {
-		fmt.Fprintln(w, "No HID devices enumerable. On Linux, ensure libudev is installed and you have read access to /dev/hidraw*.")
+		fmt.Fprintln(w, "No HID devices enumerable. On Linux, ensure /dev/hidraw* exists and the lp700 user can read it (install the udev rule).")
 		return nil
 	}
-	fmt.Fprintf(w, "%-20s  %-7s  %-7s  %-30s  %s\n", "marker", "vid", "pid", "product", "manufacturer")
+	fmt.Fprintf(w, "%-15s  %-15s  %-7s  %-7s  %-30s  %s\n", "marker", "path", "vid", "pid", "product", "manufacturer")
 	for _, d := range devs {
 		marker := "  "
-		if isLPMeter(d.Product) {
+		if isLPMeter(d.Product) || (opts.VendorID != 0 && opts.ProductID != 0 && d.VendorID == opts.VendorID && d.ProductID == opts.ProductID) {
 			marker = "* LP-500/700"
 		}
-		fmt.Fprintf(w, "%-20s  0x%04x   0x%04x   %-30s  %s\n",
-			marker, d.VendorID, d.ProductID, truncate(d.Product, 30), d.Manufacturer)
+		fmt.Fprintf(w, "%-15s  %-15s  0x%04x   0x%04x   %-30s  %s\n",
+			marker, d.Path, d.VendorID, d.ProductID, truncate(d.Product, 30), d.Manufacturer)
 	}
 	return nil
 }
@@ -70,11 +70,34 @@ func runDump(ctx context.Context, w io.Writer, opts ProbeOptions) error {
 		return err
 	}
 	defer dev.Close()
-	fmt.Fprintf(w, "# Opened %04x:%04x %q (manufacturer %q)\n", info.VendorID, info.ProductID, info.Product, info.Manufacturer)
+	fmt.Fprintf(w, "# Opened %s (%04x:%04x %q manuf=%q)\n", info.Path, info.VendorID, info.ProductID, info.Product, info.Manufacturer)
 	fmt.Fprintln(w, "# Each line is one IN report. raw=hex  decoded=human")
+
+	// Drive a poll on a ticker so the meter actually emits frames.
+	pollErr := make(chan error, 1)
+	go func() {
+		t := time.NewTicker(50 * time.Millisecond)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				if err := writeReport(dev, PollReport()); err != nil {
+					pollErr <- err
+					return
+				}
+			}
+		}
+	}()
 
 	buf := make([]byte, ReportSize)
 	for ctx.Err() == nil {
+		select {
+		case e := <-pollErr:
+			return fmt.Errorf("poll: %w", e)
+		default:
+		}
 		n, err := dev.Read(buf)
 		if err != nil {
 			return fmt.Errorf("read: %w", err)
@@ -108,16 +131,39 @@ func runCapture(ctx context.Context, w io.Writer, opts ProbeOptions) error {
 		deadline = time.Now().Add(opts.Duration)
 	}
 
-	header := fmt.Sprintf("# LP-500/700 HID capture\n# device: %04x:%04x %q\n# started: %s\n# duration: %s\n# format: 64 bytes per frame, raw\n",
-		info.VendorID, info.ProductID, info.Product, time.Now().Format(time.RFC3339), opts.Duration)
+	header := fmt.Sprintf("# LP-500/700 HID capture\n# device: %s %04x:%04x %q\n# started: %s\n# duration: %s\n# format: 64 bytes per frame, raw\n",
+		info.Path, info.VendorID, info.ProductID, info.Product, time.Now().Format(time.RFC3339), opts.Duration)
 	if _, err := f.WriteString(header); err != nil {
 		return err
 	}
 	fmt.Fprintf(w, "Capturing to %s. Press ^C to stop.\n", opts.OutPath)
 
+	// Drive a poll ticker as in dump.
+	pollErr := make(chan error, 1)
+	go func() {
+		t := time.NewTicker(50 * time.Millisecond)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				if err := writeReport(dev, PollReport()); err != nil {
+					pollErr <- err
+					return
+				}
+			}
+		}
+	}()
+
 	buf := make([]byte, ReportSize)
 	frames := 0
 	for ctx.Err() == nil {
+		select {
+		case e := <-pollErr:
+			return fmt.Errorf("poll: %w", e)
+		default:
+		}
 		if !deadline.IsZero() && time.Now().After(deadline) {
 			break
 		}
@@ -137,28 +183,31 @@ func runCapture(ctx context.Context, w io.Writer, opts ProbeOptions) error {
 	return nil
 }
 
-func openLPMeter(opts ProbeOptions) (*hid.Device, hid.DeviceInfo, error) {
-	devs := hid.Enumerate(opts.VendorID, opts.ProductID)
+func openLPMeter(opts ProbeOptions) (hidDevice, hidDeviceInfo, error) {
+	devs, err := enumerateHID()
+	if err != nil {
+		return nil, hidDeviceInfo{}, fmt.Errorf("enumerate: %w", err)
+	}
 	if len(devs) == 0 {
-		return nil, hid.DeviceInfo{}, errors.New("no HID devices enumerable")
+		return nil, hidDeviceInfo{}, errors.New("no HID devices enumerable")
 	}
 	for _, d := range devs {
 		if (opts.VendorID != 0 && opts.ProductID != 0 && d.VendorID == opts.VendorID && d.ProductID == opts.ProductID) || isLPMeter(d.Product) {
-			dev, err := d.Open()
+			dev, err := openHID(d)
 			if err != nil {
-				return nil, hid.DeviceInfo{}, fmt.Errorf("open: %w", err)
+				return nil, hidDeviceInfo{}, fmt.Errorf("open: %w", err)
 			}
 			return dev, d, nil
 		}
 	}
-	return nil, hid.DeviceInfo{}, errors.New("no LP-500/LP-700 found")
+	return nil, hidDeviceInfo{}, errors.New("no LP-500/LP-700 found")
 }
 
 func printFrame(w io.Writer, frame []byte) {
 	human := "skip"
 	if snap, err := Decode(frame); err == nil {
-		human = fmt.Sprintf("ch=%d auto=%t avg=%.1fW peak=%.1fW swr=%.2f range=%s peak=%s alarm=%t",
-			snap.Channel, snap.AutoChannel, snap.PowerAvgW, snap.PowerPeakW, snap.SWR, snap.Range, snap.PeakMode, snap.AlarmTripped)
+		human = fmt.Sprintf("ch=%d auto=%t avg=%.1fW peak=%.1fW swr=%.2f range=%s",
+			snap.Channel, snap.AutoChannel, snap.PowerAvgW, snap.PowerPeakW, snap.SWR, snap.Range)
 	} else if IsSkippable(err) {
 		human = fmt.Sprintf("non-telemetry frame type=0x%02x", frame[0])
 	} else {
@@ -179,27 +228,20 @@ func truncate(s string, n int) string {
 func IsLPMeterProductString(s string) bool { return isLPMeter(s) }
 
 // HasLPMeterAttached returns true when the host has at least one HID
-// whose product string matches LP-500 / LP-700. Used by the `auto`
-// backend selection in main.
+// whose product string matches LP-500 / LP-700, OR matches the default
+// Microchip VID:PID. Used by the `auto` backend selection in main.
 func HasLPMeterAttached() bool {
-	for _, d := range hid.Enumerate(0, 0) {
+	devs, err := enumerateHID()
+	if err != nil {
+		return false
+	}
+	for _, d := range devs {
 		if isLPMeter(d.Product) {
+			return true
+		}
+		if d.VendorID == DefaultVendorID && d.ProductID == DefaultProductID {
 			return true
 		}
 	}
 	return false
-}
-
-// helper for callers that want to surface "we matched device X" in logs.
-func describeMatch(info hid.DeviceInfo) string {
-	parts := []string{
-		fmt.Sprintf("0x%04x:0x%04x", info.VendorID, info.ProductID),
-	}
-	if info.Product != "" {
-		parts = append(parts, info.Product)
-	}
-	if info.Manufacturer != "" {
-		parts = append(parts, info.Manufacturer)
-	}
-	return strings.Join(parts, " · ")
 }

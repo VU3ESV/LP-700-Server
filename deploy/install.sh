@@ -36,11 +36,6 @@ fi
 
 echo "Using binary: $BIN"
 
-# Runtime libraries needed by the HID layer.
-if command -v apt-get >/dev/null 2>&1; then
-  apt-get install -y libudev1 || true
-fi
-
 if ! id -u lp700 >/dev/null 2>&1; then
   useradd --system --no-create-home --shell /usr/sbin/nologin lp700
 fi

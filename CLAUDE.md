@@ -143,29 +143,31 @@ class natively. The practical implications for this server:
 
 - No baud rate, no flow control, no `/dev/ttyUSB*`. The meter is a
   `/dev/hidraw*` (Linux) or a `\\\\.\\HID#…` instance ID (Windows).
-- We use [`github.com/karalabe/hid`][karalabe-hid] (CGO; bundles `hidapi`).
-  The dev box and the Pi need `libusb-1.0-0-dev` and `libudev-dev` installed.
-- Cross-compiling from a Mac for the Pi requires a Linux ARM cross-toolchain
-  (deploy/build-pi.sh sets this up). Native builds **on the Pi itself** are
-  the simplest path — see [README.md](README.md#building-on-the-pi-natively).
-
-[karalabe-hid]: https://github.com/karalabe/hid
+- The HID layer in this server talks to **`/dev/hidraw*` directly** via
+  plain file I/O and reads sysfs (`/sys/class/hidraw/*/device/uevent`)
+  for enumeration — **pure Go, no CGO, no `hidapi`/`libusb`/`libudev`
+  build dependencies**. This matches the LP-100A-Server philosophy:
+  `GOOS=linux GOARCH=arm64 go build` works from any dev box with a Go
+  toolchain, no `apt`/`brew install` of cross-gcc required.
+- The trade-off is portability: HID support is **Linux-only** in this
+  build. macOS (IOHIDDevice) and Windows (HID setupapi) are not wired
+  up — the simulator backend works on every platform, but a real meter
+  needs a Linux host (Pi or otherwise). See `internal/lpmeter/hid_other.go`
+  for the stub returned on non-Linux builds.
 
 ## Stack decisions (locked in)
 
 - **Language:** Go. Same rationale as LP-100A — single static binary per
   platform, easy ARM64 deploy.
-- **HID library:** `github.com/karalabe/hid` (CGO, vendored hidapi).
-  Cross-compilation needs a C toolchain, which is the cost of speaking HID at
-  all. The `hidraw` Linux backend means we only need `libudev-dev` at link
-  time, not `libusb-1.0-0-dev`, when building on Linux for Linux.
+- **HID library:** none. Direct `/dev/hidraw*` I/O on Linux; stub
+  elsewhere. Pure Go ⇒ pure cross-compile.
 - **WebSocket:** `gorilla/websocket`, same as LP-100A.
 - **Config:** TOML via `BurntSushi/toml`.
 - **Logging:** `log/slog` with a runtime-flippable level
   (`/api/log-level`).
 - **Deployment:** the Pi (Raspberry Pi OS, 64-bit) is the primary target.
-  Windows and macOS builds also ship — they are useful for development and
-  for running the server on the shack PC.
+  Windows and macOS builds also ship as the simulator backend (handy for
+  developing the web client without hardware).
 - **Auth:** none. Bind to LAN; network-level trust only.
 
 ## Backends
