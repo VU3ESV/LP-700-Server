@@ -160,8 +160,8 @@
   <section class="panel">
     <h2>Peak / Avg / Tune</h2>
     <div class="row">
-      <button class="cmd" data-peak="0" type="button">Average</button>
-      <button class="cmd" data-peak="1" type="button">Peak Hold</button>
+      <button class="cmd" data-peak="0" type="button">Peak Hold</button>
+      <button class="cmd" data-peak="1" type="button">Average</button>
       <button class="cmd" data-peak="2" type="button">Tune</button>
     </div>
   </section>
@@ -270,10 +270,10 @@
       b.classList.toggle("active", !!isAuto);
     });
 
-    // Peak-mode buttons
+    // Peak-mode buttons (order matches the meter's F5 cycle: Peak Hold → Avg → Tune)
     document.querySelectorAll("[data-peak]").forEach(b => {
       const v = parseInt(b.dataset.peak, 10);
-      const want = ["average", "peak_hold", "tune"][v];
+      const want = ["peak_hold", "average", "tune"][v];
       b.classList.toggle("active", data.peak_mode === want);
     });
     // Power-mode buttons

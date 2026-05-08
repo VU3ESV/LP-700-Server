@@ -97,10 +97,10 @@ var rangeNames = []string{
 	"5W", "10W", "25W", "50W", "100W", "250W", "500W", "1K", "2.5K", "5K", "10K", "auto",
 }
 
-// Peak-mode index ↔ name (user-guide page 4: Peak Hld / Average / Tune).
-// The wire encoding is unverified; these labels are only used by the
-// simulator and by EncodeCommand's verb names.
-var peakModeNames = []string{"average", "peak_hold", "tune"}
+// Peak-mode index ↔ name. Verified empirically on real hardware: the
+// firmware encodes byte[8] as 0=Peak Hold, 1=Average, 2=Tune, matching
+// the F5 soft-button cycle order in the LP-500 user guide page 4.
+var peakModeNames = []string{"peak_hold", "average", "tune"}
 
 // Power-mode index ↔ name (user-guide page 8 setup: Net (F-R) / Delivered (F+R) / Forward).
 var powerModeNames = []string{"net", "delivered", "forward"}
