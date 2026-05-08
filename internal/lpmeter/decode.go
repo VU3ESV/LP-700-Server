@@ -86,6 +86,16 @@ func Decode(report []byte) (Snapshot, error) {
 		return Snapshot{}, fmt.Errorf("expected %d-byte report, got %d", ReportSize, len(report))
 	}
 
+	// The firmware emits an ack/echo frame after every OUT command:
+	// byte[0] = the command character we wrote (e.g. 0x30 for poll),
+	// byte[1..63] = 0. Real telemetry frames always have byte[0] = 0.
+	// Skip the echoes — without this, the decoder conflates them with
+	// telemetry and produces nonsense (alternating range=auto/5W in
+	// what should be a steady-state log).
+	if report[0] != 0 {
+		return Snapshot{}, errSkipFrame
+	}
+
 	s := Snapshot{Timestamp: time.Now().UTC()}
 
 	// Power: big-endian unsigned 16-bit, scale = ×0.2 W (raw * 2 / 10
