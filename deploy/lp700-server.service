@@ -1,0 +1,41 @@
+[Unit]
+Description=LP-700 / LP-500 WebSocket Server
+Documentation=https://github.com/VU3ESV/LP-700-Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=lp700
+Group=plugdev
+ExecStart=/usr/local/bin/lp700-server -config /etc/lp700-server/config.toml
+Restart=on-failure
+RestartSec=2s
+StandardOutput=journal
+StandardError=journal
+
+# Hardening — these don't block HID access because the user is in the
+# plugdev group and the udev rule grants 0660 with that group.
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=false
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+# Resource limits suitable for a Raspberry Pi.
+LimitNOFILE=4096
+MemoryHigh=128M
+MemoryMax=256M
+
+[Install]
+WantedBy=multi-user.target

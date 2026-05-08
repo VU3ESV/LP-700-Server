@@ -1,0 +1,8 @@
+http://www.telepostinc.com
+http://www.telepostinc.com/LP-500.html
+http://www.telepostinc.com/Files/LP-500/LP-500-User_Guide.pdf
+http://www.telepostinc.com/Files/LP-500/LP-500_flyer_front_2016.pdf
+http://www.telepostinc.com/Files/LP-500/LP-500_flyer_back_2016.pdf
+http://www.telepostinc.com/Files/LP-500/LP500_v25217b5.zip
+https://github.com/VU3ESV/LP-100A-Server
+https://github.com/VU3ESV/LP-100A-App

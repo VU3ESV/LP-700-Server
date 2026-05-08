@@ -1,0 +1,26 @@
+# LP-500 / LP-700 USB HID — grant the plugdev group r/w on the hidraw node.
+#
+# The LP-500/700 enumerates as a generic HID device. Its USB Product string
+# contains "LP-500" or "LP-700" (the LP-100A in contrast appears as a
+# USB-serial bridge). We match on the product attribute so the rule works
+# whatever Telepost's USB IDs turn out to be on a given firmware.
+#
+# To find your meter's IDs, plug it in and run:
+#   lsusb
+#   udevadm info -a -n /dev/hidraw0 | grep -E 'idVendor|idProduct|product' | head
+# If you'd rather pin to specific IDs, replace the ATTRS{product} match
+# with ATTRS{idVendor}=="XXXX", ATTRS{idProduct}=="YYYY".
+#
+# After editing:
+#   sudo cp 99-lp700.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules
+#   sudo udevadm trigger
+# Match by Microchip VID:PID (default for the LP-500/700 PIC32 firmware,
+# derived from the KD4Z Node-RED flow: 1240:1 decimal = 04D8:0001 hex).
+KERNEL=="hidraw*", ATTRS{idVendor}=="04d8", ATTRS{idProduct}=="0001", GROUP="plugdev", MODE="0660", TAG+="uaccess"
+# Belt-and-suspenders: also match on the product string in case Telepost
+# ships variants with different IDs.
+KERNEL=="hidraw*", ATTRS{product}=="LP-500", GROUP="plugdev", MODE="0660", TAG+="uaccess"
+KERNEL=="hidraw*", ATTRS{product}=="LP-700", GROUP="plugdev", MODE="0660", TAG+="uaccess"
+KERNEL=="hidraw*", ATTRS{product}=="LP500",  GROUP="plugdev", MODE="0660", TAG+="uaccess"
+KERNEL=="hidraw*", ATTRS{product}=="LP700",  GROUP="plugdev", MODE="0660", TAG+="uaccess"

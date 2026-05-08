@@ -1,0 +1,1129 @@
+[
+    {
+        "id": "a65f1d125d17f35a",
+        "type": "tab",
+        "label": "LP-700-HID",
+        "disabled": false,
+        "info": "Prereq\r\n\r\nsudo apt-get install libudev-dev librtlsdr-dev libusb-1.0-0-dev libpthread-stubs0-dev\r\n\r\nnpm install robertsLando/node-red-contrib-usbhid\r\n\r\nsudo nano /etc/udev/rules.d/10-telepost.rules\r\n\r\n# this works, but is very generic\r\nKERNEL==\"hidraw*\",SUBSYSTEM==\"hidraw\", MODE:=\"777\", GROUP=\"telepost\"\r\n\r\nsudo udevadm control --reload-rules\r\nsudo groupadd -f telepost\r\nsudo gpasswd -a $USER telepost\r\n\r\nunplug/ replug\r\n\r\n\r\n\r\nfrom dmesg\r\n\r\nNew USB device found, idVendor=04d8, idProduct=0001, bcdDevice= 2.00\r\n[ 1325.646054] usb 1-1.2: New USB device strings: Mfr=1, Product=2, SerialNumber=3\r\n[ 1325.646072] usb 1-1.2: Product: LP-500\r\n[ 1325.646089] usb 1-1.2: Manufacturer: TelePost Inc.\r\n[ 1325.646106] usb 1-1.2: SerialNumber: 0x00000001"
+    },
+    {
+        "id": "182fd28e48bf4012",
+        "type": "getHIDdevices",
+        "z": "a65f1d125d17f35a",
+        "name": "",
+        "x": 1040,
+        "y": 80,
+        "wires": [
+            [
+                "c420e0a37c853d5e"
+            ]
+        ]
+    },
+    {
+        "id": "c420e0a37c853d5e",
+        "type": "debug",
+        "z": "a65f1d125d17f35a",
+        "name": "",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "true",
+        "targetType": "full",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 1210,
+        "y": 80,
+        "wires": []
+    },
+    {
+        "id": "5ee5216f92f32292",
+        "type": "inject",
+        "z": "a65f1d125d17f35a",
+        "name": "Poll Devices",
+        "props": [
+            {
+                "p": "payload"
+            },
+            {
+                "p": "topic",
+                "vt": "str"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payloadType": "date",
+        "x": 850,
+        "y": 80,
+        "wires": [
+            [
+                "182fd28e48bf4012"
+            ]
+        ]
+    },
+    {
+        "id": "b9cb9e5c2896a7dd",
+        "type": "HIDdevice",
+        "z": "a65f1d125d17f35a",
+        "connection": "d6d6ce7172ff637d",
+        "name": "HID-LP",
+        "x": 380,
+        "y": 540,
+        "wires": [
+            [
+                "1825836c27099c92",
+                "5ace3b6bba2b1f93"
+            ],
+            [
+                "1a921debda619b78"
+            ]
+        ]
+    },
+    {
+        "id": "1825836c27099c92",
+        "type": "debug",
+        "z": "a65f1d125d17f35a",
+        "name": "Raw Buffer",
+        "active": false,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "true",
+        "targetType": "full",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 290,
+        "y": 620,
+        "wires": []
+    },
+    {
+        "id": "1a921debda619b78",
+        "type": "debug",
+        "z": "a65f1d125d17f35a",
+        "name": "Errors",
+        "active": false,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "true",
+        "targetType": "full",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 290,
+        "y": 660,
+        "wires": []
+    },
+    {
+        "id": "513c3085806d7999",
+        "type": "function",
+        "z": "a65f1d125d17f35a",
+        "name": "Poll Meter Values",
+        "func": "var outbuff = Buffer.alloc(64);\n\noutbuff[1] = 48;  // get data\nmsg.payload = outbuff;\n\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 550,
+        "y": 340,
+        "wires": [
+            [
+                "b9cb9e5c2896a7dd"
+            ]
+        ]
+    },
+    {
+        "id": "5ace3b6bba2b1f93",
+        "type": "function",
+        "z": "a65f1d125d17f35a",
+        "name": "LP Dice and Slice",
+        "func": "/*\n\nOrdinates in VB are based 1, so subtract 1 from\n each ordinate to access correct buffer element\n\nlstResults.AddItem \"Pk Pwr Hi byte =\" & InputReportData(24)\nlstResults.AddItem \"Pk Pwr Lo byte =\" & InputReportData(25)\nlstResults.AddItem \"Avg Pwr Hi byte =\" & InputReportData(26)\nlstResults.AddItem \"Avg Pwr Lo byte =\" & InputReportData(27)\nlstResults.AddItem \"BG_avg =\" & InputReportData(28)\nlstResults.AddItem \"BG_pk =\" & InputReportData(29)\nlstResults.AddItem \"BG_SWR =\" & InputReportData(30)\n\nAvg_Pwr = InputReportData(26)\nAvg_Pwr = Avg_Pwr * 256\nAvg_Pwr = (Avg_Pwr + InputReportData(27)) * 2  \n\nPk_Pwr = InputReportData(24)\nPk_Pwr = Pk_Pwr * 256\nPk_Pwr = (Pk_Pwr + InputReportData(25)) * 2  \n\nSWR_Disp = Int(InputReportData(38) + InputReportData(3) * 256) / 100\n\n*/\n\nconst PKPWR_HIBYTE = 23\nconst PKPWR_LOBYTE = 24\nconst AVGPWR_HIBYTE = 25\nconst AVGPWR_LOBYTE = 26\nconst SWR_HIBYTE = 2\nconst SWR_LOBYTE = 37\nconst PWRMULT_HIBYTE = 30\nconst PWRMULT_LOBYTE = 31\nconst MODE = 3\nconst CHANNEL = 4\nconst RANGE = 6\nconst CHANNELAUTO = 5\n\nvar msg1 = {};\nvar buff = msg.payload;\nvar mode = buff[MODE];\nvar channel = buff[CHANNEL];\nvar channelauto = buff[CHANNELAUTO];\nvar range = buff[RANGE];\n\nvar mult    = ( (buff[PWRMULT_HIBYTE] * 256) + buff[PWRMULT_LOBYTE]) * 2;\n\nvar Avg_Pwr = ( (buff[AVGPWR_HIBYTE] * 256) + buff[AVGPWR_LOBYTE] ) * 2 / 10;\n\nvar Pk_Pwr  = ( (buff[PKPWR_HIBYTE]  * 256) + buff[PKPWR_LOBYTE]  ) * 2 / 10;\n\nvar SWR     = ( (buff[SWR_HIBYTE]    * 256) + buff[SWR_LOBYTE]  ) / 100;\n\n\nmsg1.power_avg = Avg_Pwr.toFixed(0);\nmsg1.power_peak = Pk_Pwr.toFixed(0);\nmsg1.swr = SWR.toFixed(2);\nmsg1.scale = mult / 4;\nmsg1.mode = mode;\nmsg1.channel = channel;\n//msg1.channel_auto = channelauto;\nmsg1.range = range;\n\n\nreturn msg1;",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 610,
+        "y": 540,
+        "wires": [
+            [
+                "3cb83742cb0f56fe",
+                "4d11a88b8b43c86e",
+                "b3531ba160e983b2",
+                "d32385b287c94f96",
+                "e86ea343d67f6001",
+                "1ac7b05479b34330",
+                "341b3dc9e99e2d2c"
+            ]
+        ]
+    },
+    {
+        "id": "3cb83742cb0f56fe",
+        "type": "debug",
+        "z": "a65f1d125d17f35a",
+        "name": "Parsed Data",
+        "active": false,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "true",
+        "targetType": "full",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 630,
+        "y": 480,
+        "wires": []
+    },
+    {
+        "id": "4d11a88b8b43c86e",
+        "type": "rbe",
+        "z": "a65f1d125d17f35a",
+        "name": "",
+        "func": "rbe",
+        "gap": "",
+        "start": "",
+        "inout": "out",
+        "septopics": false,
+        "property": "power_avg",
+        "topi": "topic",
+        "x": 830,
+        "y": 260,
+        "wires": [
+            [
+                "6e1a0ca4da2fc1b2",
+                "e7fbcdcf395fd49c"
+            ]
+        ]
+    },
+    {
+        "id": "b3531ba160e983b2",
+        "type": "rbe",
+        "z": "a65f1d125d17f35a",
+        "name": "",
+        "func": "rbe",
+        "gap": "",
+        "start": "",
+        "inout": "out",
+        "septopics": false,
+        "property": "power_peak",
+        "topi": "topic",
+        "x": 830,
+        "y": 440,
+        "wires": [
+            [
+                "0843cb1357243f45",
+                "c1b73549cecec5f3",
+                "00c4efca148560d5"
+            ]
+        ]
+    },
+    {
+        "id": "d32385b287c94f96",
+        "type": "rbe",
+        "z": "a65f1d125d17f35a",
+        "name": "",
+        "func": "rbe",
+        "gap": "",
+        "start": "",
+        "inout": "out",
+        "septopics": false,
+        "property": "swr",
+        "topi": "topic",
+        "x": 830,
+        "y": 520,
+        "wires": [
+            [
+                "2c365e1d45b04779",
+                "c3f226d651267bd2"
+            ]
+        ]
+    },
+    {
+        "id": "4761fea00c851552",
+        "type": "comment",
+        "z": "a65f1d125d17f35a",
+        "name": "Prerequisites -  Open me up and do this stuff or it won't work- Update LB9KJ/VU3ESV",
+        "info": "# Launch Bitvise, Putty, or whatever your favorite shell application is\n# shell into your Raspberry Pi that is running Node-Red\n# 25-04- 2025: LB9KJ/VU3ESV: Install the following nodes before deployment\n#    node-red-dashboard\n#    node-red-contrib-ui-level\n\n# change into the hidden node-red directory\ncd ~/.node-red\n\n# add dependencies\nsudo apt-get update\nsudo apt-get install libudev-dev librtlsdr-dev libusb-1.0-0-dev libpthread-stubs0-dev git\n\n# install the usbhid Nodes.  Use this branch, not the one that comes up\n# in the Palette search.  That one won't install correctly.\n# 25-04- 2025: LB9KJ/VU3ESV: robertsLando/node-red-contrib-usbhid will not work in NodeRed 4.0\n# try the next one instead\n# sudo npm install robertsLando/node-red-contrib-usbhid\nsudo npm install somebuddy87/node-red-contrib-usbhid \n\n# 25-04- 2025: LB9KJ/VU3ESV: Install this to bring the stoptimer3\nsudo npm install zybron/node-red-contrib-stoptimer3\n# 25-04- 2025: LB9KJ/VU3ESV: Reboot the Pi\nsudo reboot now\n# 25-04- 2025: wait for the pi to reboot \ncd ~/.node-red\n\n# create a udev rule file  \nsudo nano /etc/udev/rules.d/10-telepost.rules\n\n# put this line in it and save the file (Ctrl-X then Y to save an exit Nano)\nKERNEL==\"hidraw*\", SUBSYSTEM==\"hidraw\", MODE:=\"777\", GROUP=\"telepost\"\n\n# then reload udev rules\nsudo udevadm control --reload-rules\n\n# add a new user group called telepost, and add the current user into it\n# the user needs to be the one that Node-Red is running under. \n# You likely are running Node-Red as the \"pi\" user.  \nsudo groupadd -f telepost\nsudo gpasswd -a $USER telepost\n\n\n# This must be done after above is done.\n# Turn on the LP-500 / LP-700 meter.\n\n# You will need a USB A to USB B cable.\n\n# Plug the LP-500 / LP700 USB port into a free USB port on the Pi. \n# If it was already plugged in, remove it and plug in again.\n\n# In the Flow, click the \"Pole Devices\" Inject node trigger button. \n# It triggers the getHIDdevices node. In the Debug TAB, expand the debug object.\n\n#  You should get an array of at least element.  Open it up and copy the value in \n# \"path\" to the clipboard.\n# in my case it is:  /dev/hidraw0\n\n# Edit the \"HID-LP\" (HIDdevice) node to set the path to the value found above.\n# Restart Flow, and it should be decorated with \"connected\"  If not, check your work.\n\n# This The HIDdevice node seems to not be able to recover from disconnects and \n# power resets of the LP-500 / LP-700 meter.   Leave the Meter power on!\n\n# Buy me a beer when you see me.\n# Warren, KD4Z\n\n",
+        "x": 330,
+        "y": 120,
+        "wires": []
+    },
+    {
+        "id": "003125de085c5603",
+        "type": "comment",
+        "z": "a65f1d125d17f35a",
+        "name": "LP-500 / LP-700 HID DIRECT v1.2 - KD4Z",
+        "info": "\nKD4Z    1.0 Proof of concept\nKD4Z    1.1 Added 3 step automatic scaling for power bargraphs.  100W - 500W - 1500W\nKD4Z    1.2 Added Peak hold functionality for the power label values\n            Added Channel and Range button actions\n            Changed automatic scaling to follow what the meter is doing.\n\n",
+        "x": 200,
+        "y": 40,
+        "wires": []
+    },
+    {
+        "id": "471ff99438c94bb0",
+        "type": "comment",
+        "z": "a65f1d125d17f35a",
+        "name": "Displays Power and SWR directly from LP-500 and LP-700  on NR Raspberry Pi / Linux ONLY",
+        "info": "",
+        "x": 360,
+        "y": 80,
+        "wires": []
+    },
+    {
+        "id": "95e0670dba1d084a",
+        "type": "inject",
+        "z": "a65f1d125d17f35a",
+        "name": "Kickstart",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": true,
+        "onceDelay": "1",
+        "topic": "",
+        "payloadType": "date",
+        "x": 120,
+        "y": 220,
+        "wires": [
+            [
+                "939fb4baea58f7e0",
+                "624955430bc7e267"
+            ]
+        ]
+    },
+    {
+        "id": "1d9dc055f17a849f",
+        "type": "link out",
+        "z": "a65f1d125d17f35a",
+        "name": "",
+        "links": [
+            "6a537522d5b536fd",
+            "18e52b8a02c5dd77"
+        ],
+        "x": 435,
+        "y": 200,
+        "wires": []
+    },
+    {
+        "id": "6a537522d5b536fd",
+        "type": "link in",
+        "z": "a65f1d125d17f35a",
+        "name": "AvgBar_in",
+        "links": [
+            "1d9dc055f17a849f",
+            "042de4d1d031db74"
+        ],
+        "x": 1095,
+        "y": 320,
+        "wires": [
+            [
+                "3c735726bb7b2459"
+            ]
+        ]
+    },
+    {
+        "id": "18e52b8a02c5dd77",
+        "type": "link in",
+        "z": "a65f1d125d17f35a",
+        "name": "PeakBar_in",
+        "links": [
+            "042de4d1d031db74",
+            "1d9dc055f17a849f"
+        ],
+        "x": 1095,
+        "y": 480,
+        "wires": [
+            [
+                "a5548b9ac9ec4686"
+            ]
+        ]
+    },
+    {
+        "id": "042de4d1d031db74",
+        "type": "link out",
+        "z": "a65f1d125d17f35a",
+        "name": "",
+        "links": [
+            "6a537522d5b536fd",
+            "18e52b8a02c5dd77"
+        ],
+        "x": 1235,
+        "y": 160,
+        "wires": []
+    },
+    {
+        "id": "0843cb1357243f45",
+        "type": "function",
+        "z": "a65f1d125d17f35a",
+        "name": "Peak Hold Logic",
+        "func": "var value = msg.power_peak;\nvar id = \"peak_hold\";\nvar cnt = 0.0;\nvar topic = \"\";\nvar reset;\n\n\nif (typeof msg.peakreset == \"undefined\") {\n    reset = false;\n}\nelse {\n    value = 0;\n    reset = msg.peakreset;\n}\n\nif (reset) {\n    cnt = 0;\n    node.status({ fill: \"red\", shape: \"ring\", text: \"Peak Reset\" });\n    context.set(id, cnt);\n    \n}\nelse {\n    cnt = parseFloat(context.get(id));  // get previous highwater mark\n    if (typeof cnt != 'number') {\n        cnt = 0;\n    }\n    node.status({ fill: \"green\", shape: \"ring\", text: \"LastPeak=\" + cnt });\n    if (value > cnt) {\n        cnt = value;\n    }\n}\n\ncontext.set(id, cnt);\n\n\nmsg.power_peak = cnt;\nreturn msg;\n",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1040,
+        "y": 380,
+        "wires": [
+            [
+                "91e6a68092389463"
+            ]
+        ]
+    },
+    {
+        "id": "6e1a0ca4da2fc1b2",
+        "type": "function",
+        "z": "a65f1d125d17f35a",
+        "name": "Peak Hold Logic",
+        "func": "var value = msg.power_avg;\nvar id = \"peak_hold\";\nvar cnt = 0.0;\nvar topic = \"\";\nvar reset;\n\n\nif (typeof msg.peakreset == \"undefined\")\n{\n    reset = false;\n}\nelse\n{\n    value = 0;\n    reset = msg.peakreset;\n}\n\nif (reset)\n{\n    cnt = 0;\n    node.status({ fill: \"red\", shape: \"ring\", text: \"Peak Reset\" });\n    context.set(id, cnt);\n   \n}\nelse\n{\n    cnt = parseFloat(context.get(id)) ;  // get previous highwater mark\n    if (typeof cnt != 'number')\n    {\n        node.warn(\"cnt context not a number\");\n        cnt = 0;\n    }\n    node.status({ fill: \"green\", shape: \"ring\", text: \"LastPeak=\" + cnt });\n    if (value > cnt)\n    {\n        cnt = value;\n    }   \n}\n\ncontext.set(id, cnt);\n\n\nmsg.power_avg = cnt;\nreturn msg;\n",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1040,
+        "y": 220,
+        "wires": [
+            [
+                "b133d167a6a19e47"
+            ]
+        ]
+    },
+    {
+        "id": "87715e3076890203",
+        "type": "debug",
+        "z": "a65f1d125d17f35a",
+        "name": "",
+        "active": false,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "true",
+        "targetType": "full",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 1210,
+        "y": 120,
+        "wires": []
+    },
+    {
+        "id": "1a838459d1fcc6e2",
+        "type": "function",
+        "z": "a65f1d125d17f35a",
+        "name": "Peak Reset Command",
+        "func": "var msg1 = { peakreset : true };\nreturn msg1;",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 540,
+        "y": 260,
+        "wires": [
+            [
+                "c6d536720706597e"
+            ]
+        ]
+    },
+    {
+        "id": "939fb4baea58f7e0",
+        "type": "function",
+        "z": "a65f1d125d17f35a",
+        "name": "Zero meters",
+        "func": "flow.set(\"rangeset\", 0);\nmsg.power_avg = 0\nmsg.power_peak = 0;\nmsg.swr = 0;\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 310,
+        "y": 220,
+        "wires": [
+            [
+                "1d9dc055f17a849f"
+            ]
+        ]
+    },
+    {
+        "id": "b29d6fc4a20f19d3",
+        "type": "function",
+        "z": "a65f1d125d17f35a",
+        "name": "Change Channel",
+        "func": "var outbuff = Buffer.alloc(64);\n\noutbuff[1] = 56;  // change channel\nmsg.payload = outbuff;\n\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1210,
+        "y": 700,
+        "wires": [
+            [
+                "c415c70c07b3125c"
+            ]
+        ]
+    },
+    {
+        "id": "b0c741ec8e36d34f",
+        "type": "inject",
+        "z": "a65f1d125d17f35a",
+        "name": "",
+        "props": [
+            {
+                "p": "payload"
+            },
+            {
+                "p": "topic",
+                "vt": "str"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 1020,
+        "y": 700,
+        "wires": [
+            [
+                "b29d6fc4a20f19d3"
+            ]
+        ]
+    },
+    {
+        "id": "4bc05536cf2358e0",
+        "type": "link in",
+        "z": "a65f1d125d17f35a",
+        "name": "",
+        "links": [
+            "c415c70c07b3125c",
+            "5b7ecaf06003601c"
+        ],
+        "x": 215,
+        "y": 540,
+        "wires": [
+            [
+                "b9cb9e5c2896a7dd"
+            ]
+        ]
+    },
+    {
+        "id": "c415c70c07b3125c",
+        "type": "link out",
+        "z": "a65f1d125d17f35a",
+        "name": "",
+        "links": [
+            "4bc05536cf2358e0"
+        ],
+        "x": 1335,
+        "y": 700,
+        "wires": []
+    },
+    {
+        "id": "906c6736814cadc6",
+        "type": "function",
+        "z": "a65f1d125d17f35a",
+        "name": "Set CH Label",
+        "func": "switch (msg.channel)\n{\n    case 0:\n        msg.payload = \"CH Auto\";\n        break;\n    case 1:\n    case 2:\n    case 3:\n    case 4:\n        var text = \"Channel \" + msg.channel;\n        msg.payload = text;\n        break;\n}\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 970,
+        "y": 620,
+        "wires": [
+            [
+                "aa254f26267a11bc"
+            ]
+        ]
+    },
+    {
+        "id": "e86ea343d67f6001",
+        "type": "rbe",
+        "z": "a65f1d125d17f35a",
+        "name": "",
+        "func": "rbe",
+        "gap": "",
+        "start": "",
+        "inout": "out",
+        "septopics": false,
+        "property": "channel",
+        "topi": "topic",
+        "x": 830,
+        "y": 620,
+        "wires": [
+            [
+                "906c6736814cadc6"
+            ]
+        ]
+    },
+    {
+        "id": "fe1e5319fdc6554b",
+        "type": "function",
+        "z": "a65f1d125d17f35a",
+        "name": "Meter Range",
+        "func": "var msg1 = {};\nvar scale = msg.scale;\nvar label;\n\nif (scale == undefined)\n    scale = 5;\n    \nswitch (scale)\n{\n    case 5:  // 5W\n        msg1.control = { min: 0, max: 5, seg1: 2.5};\n        label = \"5W\";\n        break;\n    case 10:  // 10W\n        msg1.control = { min: 0, max: 10, seg1: 5 };\n        label = \"10W\";\n        break;\n    case 25:  // 25W\n        msg1.control = { min: 0, max: 30, seg1: 15 };\n        label = \"25W\";\n        break;\n    case 50:  // 50W\n        msg1.control = { min: 0, max: 50, seg1: 25};\n        label = \"50W\";\n        break;\n    case 100:  // 100W\n        msg1.control = { min: 0, max: 100, seg1: 50 };\n        label = \"100W\";\n        break;\n    case 250:  // 250W\n        msg1.control = { min: 0, max: 250, seg1: 125 };\n        label = \"250W\";\n        break;\n    case 500:  // 500W\n        msg1.control = { min: 0, max: 500, seg1: 250 };\n        label = \"500W\";\n        break;\n    case 1000:  // 1000W\n        msg1.control = { min: 0, max: 1000, seg1: 500 };\n        label = \"1000W\";\n        break;\n    case 2500:  // 2500W\n        msg1.control = { min: 0, max: 2.5, seg1: 1.25 };\n        label = \"2500W\";\n        break;\n    case 5000:  // 5KW\n        msg1.control = { min: 0, max: 5, seg1: 2.5 };\n        label = \"5KW\";\n        break;\n    case 10000:  // 10KW\n        msg1.control = { min: 0, max: 10, seg1: 5 };\n        label = \"5KW\";\n        break;\n}\n\nnode.status({ fill: \"black\", shape: \"ring\", text: label });\n\n\nreturn msg1;",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1030,
+        "y": 140,
+        "wires": [
+            [
+                "042de4d1d031db74",
+                "87715e3076890203"
+            ]
+        ]
+    },
+    {
+        "id": "1ac7b05479b34330",
+        "type": "rbe",
+        "z": "a65f1d125d17f35a",
+        "name": "",
+        "func": "rbe",
+        "gap": "",
+        "start": "",
+        "inout": "out",
+        "septopics": true,
+        "property": "scale",
+        "topi": "topic",
+        "x": 830,
+        "y": 140,
+        "wires": [
+            [
+                "fe1e5319fdc6554b",
+                "1a838459d1fcc6e2"
+            ]
+        ]
+    },
+    {
+        "id": "c1b73549cecec5f3",
+        "type": "function",
+        "z": "a65f1d125d17f35a",
+        "name": "to KW if needed",
+        "func": "var range = msg.range;\n\nif (range == undefined)\n    range = 0;\n\nswitch (range)\n{\n    case 8:\n    case 9:\n    case 10:\n        msg.power_peak = msg.power_peak.toFixed(0);\n        msg.power_peak = msg.power_peak / 1000;\n    \n}\nmsg.payload = 0 // surpress errors \n\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1040,
+        "y": 440,
+        "wires": [
+            [
+                "a5548b9ac9ec4686"
+            ]
+        ]
+    },
+    {
+        "id": "e7fbcdcf395fd49c",
+        "type": "function",
+        "z": "a65f1d125d17f35a",
+        "name": "to KW if needed",
+        "func": "var range = msg.range;\n\nif (range == undefined)\n    range = 0;\n\nswitch (range)\n{\n    case 8:\n    case 9:\n    case 10:\n        \n        msg.power_avg= msg.avg / 1000;\n        break;\n    \n}\n\nmsg.payload = 0 // surpress errors \nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1040,
+        "y": 280,
+        "wires": [
+            [
+                "3c735726bb7b2459"
+            ]
+        ]
+    },
+    {
+        "id": "341b3dc9e99e2d2c",
+        "type": "rbe",
+        "z": "a65f1d125d17f35a",
+        "name": "",
+        "func": "rbe",
+        "gap": "",
+        "start": "",
+        "inout": "out",
+        "septopics": false,
+        "property": "range",
+        "topi": "topic",
+        "x": 830,
+        "y": 780,
+        "wires": [
+            [
+                "46b6718b19aa982c"
+            ]
+        ]
+    },
+    {
+        "id": "46b6718b19aa982c",
+        "type": "function",
+        "z": "a65f1d125d17f35a",
+        "name": "Set  Range Label",
+        "func": "switch (msg.range)\n{\n    case 0:\n        msg.payload = \"Range 5 W\";\n        break;\n    case 1:\n        msg.payload = \"Range 10 W\";\n        break;\n    case 2:\n        msg.payload = \"Range 25 W\";\n        break;\n    case 3:\n        msg.payload = \"Range 50 W\";\n        break;\n    case 4:\n        msg.payload = \"Range 100 W\";\n        break;\n    case 5:\n        msg.payload = \"Range 250 W\";\n        break;\n    case 6:\n        msg.payload = \"Range 500 W\";\n        break;\n    case 7:\n        msg.payload = \"Range 1 KW\";\n        break;\n    case 8:\n        msg.payload = \"Range 2.5 KW\";\n        break;\n    case 9:\n        msg.payload = \"Range 5 KW\";\n        break;\n    case 10:\n        msg.payload = \"Range 10 KW\";\n        break;\n    case 11:\n        var text = \"Range Auto\";\n        msg.payload = text;\n        break;\n}\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 990,
+        "y": 780,
+        "wires": [
+            [
+                "245ba88d397c41db"
+            ]
+        ]
+    },
+    {
+        "id": "544ea926841c0baf",
+        "type": "function",
+        "z": "a65f1d125d17f35a",
+        "name": "Change Range",
+        "func": "var outbuff = Buffer.alloc(64);\n\noutbuff[1] = 57;  // change range\nmsg.payload = outbuff;\n\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1200,
+        "y": 860,
+        "wires": [
+            [
+                "5b7ecaf06003601c"
+            ]
+        ]
+    },
+    {
+        "id": "5b7ecaf06003601c",
+        "type": "link out",
+        "z": "a65f1d125d17f35a",
+        "name": "",
+        "links": [
+            "4bc05536cf2358e0"
+        ],
+        "x": 1335,
+        "y": 860,
+        "wires": []
+    },
+    {
+        "id": "95953a7b40e3f496",
+        "type": "inject",
+        "z": "a65f1d125d17f35a",
+        "name": "",
+        "props": [
+            {
+                "p": "payload"
+            },
+            {
+                "p": "topic",
+                "vt": "str"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 1020,
+        "y": 860,
+        "wires": [
+            [
+                "544ea926841c0baf"
+            ]
+        ]
+    },
+    {
+        "id": "624955430bc7e267",
+        "type": "trigger",
+        "z": "a65f1d125d17f35a",
+        "name": "",
+        "op1": "1",
+        "op2": "0",
+        "op1type": "str",
+        "op2type": "str",
+        "duration": "-100",
+        "extend": false,
+        "overrideDelay": false,
+        "units": "ms",
+        "reset": "",
+        "bytopic": "all",
+        "topic": "topic",
+        "outputs": 1,
+        "x": 160,
+        "y": 360,
+        "wires": [
+            [
+                "513c3085806d7999"
+            ]
+        ]
+    },
+    {
+        "id": "c6d536720706597e",
+        "type": "link out",
+        "z": "a65f1d125d17f35a",
+        "name": "",
+        "links": [
+            "13a88669ed3a27ff",
+            "e69c18c6b2f35607"
+        ],
+        "x": 695,
+        "y": 260,
+        "wires": []
+    },
+    {
+        "id": "13a88669ed3a27ff",
+        "type": "link in",
+        "z": "a65f1d125d17f35a",
+        "name": "",
+        "links": [
+            "c6d536720706597e"
+        ],
+        "x": 875,
+        "y": 380,
+        "wires": [
+            [
+                "0843cb1357243f45"
+            ]
+        ]
+    },
+    {
+        "id": "e69c18c6b2f35607",
+        "type": "link in",
+        "z": "a65f1d125d17f35a",
+        "name": "",
+        "links": [
+            "c6d536720706597e"
+        ],
+        "x": 875,
+        "y": 220,
+        "wires": [
+            [
+                "6e1a0ca4da2fc1b2"
+            ]
+        ]
+    },
+    {
+        "id": "00c4efca148560d5",
+        "type": "link out",
+        "z": "a65f1d125d17f35a",
+        "name": "PeakData__out",
+        "links": [
+            "92c092d3ef4ce1e1"
+        ],
+        "x": 935,
+        "y": 480,
+        "wires": []
+    },
+    {
+        "id": "92c092d3ef4ce1e1",
+        "type": "link in",
+        "z": "a65f1d125d17f35a",
+        "name": "",
+        "links": [
+            "00c4efca148560d5"
+        ],
+        "x": 195,
+        "y": 300,
+        "wires": [
+            [
+                "fde47173f2a675e0"
+            ]
+        ]
+    },
+    {
+        "id": "aa254f26267a11bc",
+        "type": "ui_button",
+        "z": "a65f1d125d17f35a",
+        "name": "",
+        "group": "3ed8907e.431d9",
+        "order": 7,
+        "width": 3,
+        "height": 1,
+        "passthru": false,
+        "label": "{{msg.payload}}",
+        "tooltip": "",
+        "color": "",
+        "bgcolor": "",
+        "icon": "",
+        "payload": "",
+        "payloadType": "str",
+        "topic": "topic",
+        "topicType": "msg",
+        "x": 1210,
+        "y": 620,
+        "wires": [
+            [
+                "b29d6fc4a20f19d3"
+            ]
+        ]
+    },
+    {
+        "id": "245ba88d397c41db",
+        "type": "ui_button",
+        "z": "a65f1d125d17f35a",
+        "name": "",
+        "group": "3ed8907e.431d9",
+        "order": 8,
+        "width": 3,
+        "height": 1,
+        "passthru": false,
+        "label": "{{msg.payload}}",
+        "tooltip": "",
+        "color": "",
+        "bgcolor": "",
+        "icon": "",
+        "payload": "",
+        "payloadType": "str",
+        "topic": "topic",
+        "topicType": "msg",
+        "x": 1210,
+        "y": 780,
+        "wires": [
+            [
+                "544ea926841c0baf"
+            ]
+        ]
+    },
+    {
+        "id": "b133d167a6a19e47",
+        "type": "ui_text",
+        "z": "a65f1d125d17f35a",
+        "group": "3ed8907e.431d9",
+        "order": 1,
+        "width": 3,
+        "height": 1,
+        "name": "Average",
+        "label": "<font color=\"yellow\" size =\"3\">Average",
+        "format": "{{msg.power_avg}} W",
+        "layout": "row-spread",
+        "x": 1220,
+        "y": 220,
+        "wires": []
+    },
+    {
+        "id": "91e6a68092389463",
+        "type": "ui_text",
+        "z": "a65f1d125d17f35a",
+        "group": "3ed8907e.431d9",
+        "order": 3,
+        "width": 3,
+        "height": 1,
+        "name": "Peak",
+        "label": "<font color=\"yellow\" size =\"3\">Peak",
+        "format": "{{msg.power_peak}} W",
+        "layout": "row-spread",
+        "x": 1210,
+        "y": 380,
+        "wires": []
+    },
+    {
+        "id": "c3f226d651267bd2",
+        "type": "ui_text",
+        "z": "a65f1d125d17f35a",
+        "group": "3ed8907e.431d9",
+        "order": 5,
+        "width": 3,
+        "height": 1,
+        "name": "SWR",
+        "label": "<font color=\"yellow\" size =\"3\">SWR",
+        "format": "{{msg.swr}}",
+        "layout": "row-spread",
+        "x": 1210,
+        "y": 520,
+        "wires": []
+    },
+    {
+        "id": "2c365e1d45b04779",
+        "type": "ui_level",
+        "z": "a65f1d125d17f35a",
+        "group": "3ed8907e.431d9",
+        "order": 6,
+        "width": 3,
+        "height": 1,
+        "name": "SWR_level",
+        "label": "",
+        "colorHi": "#e60000",
+        "colorWarn": "#ff9900",
+        "colorNormal": "#00b33c",
+        "colorOff": "#595959",
+        "min": "1",
+        "max": "3.0",
+        "segWarn": "1.5",
+        "segHigh": "2.0",
+        "unit": "",
+        "layout": "sh",
+        "channelA": "",
+        "channelB": "",
+        "decimals": "1",
+        "animations": "off",
+        "shape": "3",
+        "colorschema": "fixed",
+        "textoptions": "custom",
+        "colorText": "#eeeeee",
+        "fontLabel": "",
+        "fontValue": "",
+        "fontSmall": "",
+        "colorFromTheme": true,
+        "textAnimations": false,
+        "hideValue": true,
+        "tickmode": "segments",
+        "peakmode": true,
+        "property": "swr",
+        "peaktime": 3000,
+        "x": 1230,
+        "y": 560,
+        "wires": []
+    },
+    {
+        "id": "3c735726bb7b2459",
+        "type": "ui_level",
+        "z": "a65f1d125d17f35a",
+        "group": "3ed8907e.431d9",
+        "order": 2,
+        "width": 3,
+        "height": 1,
+        "name": "Avg_level",
+        "label": "",
+        "colorHi": "#e60000",
+        "colorWarn": "#ff9901",
+        "colorNormal": "#00b33c",
+        "colorOff": "#595959",
+        "min": "1",
+        "max": "5",
+        "segWarn": "",
+        "segHigh": "",
+        "unit": "",
+        "layout": "sh",
+        "channelA": "",
+        "channelB": "",
+        "decimals": "0",
+        "animations": "off",
+        "shape": "3",
+        "colorschema": "fixed",
+        "textoptions": "custom",
+        "colorText": "#eeeeee",
+        "fontLabel": "",
+        "fontValue": "",
+        "fontSmall": "",
+        "colorFromTheme": true,
+        "textAnimations": false,
+        "hideValue": true,
+        "tickmode": "auto",
+        "peakmode": true,
+        "property": "power_avg",
+        "peaktime": 3000,
+        "x": 1260,
+        "y": 300,
+        "wires": []
+    },
+    {
+        "id": "a5548b9ac9ec4686",
+        "type": "ui_level",
+        "z": "a65f1d125d17f35a",
+        "group": "3ed8907e.431d9",
+        "order": 4,
+        "width": 3,
+        "height": 1,
+        "name": "Peak_level",
+        "label": "",
+        "colorHi": "#e60000",
+        "colorWarn": "#ff9901",
+        "colorNormal": "#00b33c",
+        "colorOff": "#595959",
+        "min": "1",
+        "max": "5",
+        "segWarn": "",
+        "segHigh": "",
+        "unit": "",
+        "layout": "sh",
+        "channelA": "",
+        "channelB": "",
+        "decimals": "0",
+        "animations": "off",
+        "shape": "3",
+        "colorschema": "fixed",
+        "textoptions": "custom",
+        "colorText": "#eeeeee",
+        "fontLabel": "",
+        "fontValue": "",
+        "fontSmall": "",
+        "colorFromTheme": true,
+        "textAnimations": false,
+        "hideValue": true,
+        "tickmode": "auto",
+        "peakmode": true,
+        "property": "power_peak",
+        "peaktime": 3000,
+        "x": 1250,
+        "y": 440,
+        "wires": []
+    },
+    {
+        "id": "fde47173f2a675e0",
+        "type": "stoptimer2",
+        "z": "a65f1d125d17f35a",
+        "duration": "3",
+        "durationType": "num",
+        "units": "Second",
+        "payloadtype": "num",
+        "payloadval": "0",
+        "name": "PeakResetTimer",
+        "x": 330,
+        "y": 300,
+        "wires": [
+            [
+                "1a838459d1fcc6e2"
+            ],
+            []
+        ]
+    },
+    {
+        "id": "d6d6ce7172ff637d",
+        "type": "HIDConfig",
+        "vid": "1240",
+        "pid": "1",
+        "name": "LP-500-LP-700"
+    },
+    {
+        "id": "3ed8907e.431d9",
+        "type": "ui_group",
+        "name": "LP-700-UID",
+        "tab": "8f98f4ce.30eb48",
+        "order": 7,
+        "disp": true,
+        "width": "6",
+        "collapse": true,
+        "className": ""
+    },
+    {
+        "id": "8f98f4ce.30eb48",
+        "type": "ui_tab",
+        "name": "LB9KJ Shack Control",
+        "icon": "dashboard",
+        "order": 1,
+        "disabled": false,
+        "hidden": false
+    },
+    {
+        "id": "49e3d6e970fe9e48",
+        "type": "global-config",
+        "env": [],
+        "modules": {
+            "node-red-contrib-usbhid": "1.0.0",
+            "node-red-dashboard": "3.6.6",
+            "node-red-contrib-ui-level": "0.1.46",
+            "node-red-contrib-stoptimer2": "0.1.1"
+        }
+    }
+]

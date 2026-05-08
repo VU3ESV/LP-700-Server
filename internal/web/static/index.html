@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>LP-500 / LP-700</title>
+<style>
+  :root {
+    --bg: #0c1117;
+    --panel: #141b25;
+    --panel-2: #1b2532;
+    --text: #d8e3ef;
+    --muted: #6c7d92;
+    --accent: #6cb6ff;
+    --green: #4ad6a3;
+    --yellow: #f0c674;
+    --red: #f47b7b;
+    --border: #243044;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font: 14px/1.4 -apple-system, system-ui, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg); color: var(--text);
+    min-height: 100vh;
+  }
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 18px; border-bottom: 1px solid var(--border);
+    background: var(--panel);
+  }
+  header h1 { font-size: 16px; margin: 0; letter-spacing: 0.04em; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 10px; border-radius: 999px; font-size: 12px;
+    border: 1px solid var(--border);
+  }
+  .pill.live  { color: var(--green); }
+  .pill.idle  { color: var(--yellow); }
+  .pill.dead  { color: var(--red); }
+  .pill.sim   { color: var(--yellow); }
+  .pill.dot::before {
+    content: ""; width: 8px; height: 8px; border-radius: 50%;
+    background: currentColor;
+  }
+  main {
+    display: grid; gap: 12px;
+    grid-template-columns: 1fr;
+    padding: 14px;
+    max-width: 880px; margin: 0 auto;
+  }
+  @media (min-width: 720px) {
+    main { grid-template-columns: 1fr 1fr; }
+    .span-2 { grid-column: span 2; }
+  }
+  .panel {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 14px;
+  }
+  .panel h2 {
+    font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--muted); margin: 0 0 10px;
+  }
+  .reading {
+    display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap;
+  }
+  .reading .v {
+    font-variant-numeric: tabular-nums;
+    font-size: 44px; font-weight: 600; line-height: 1; color: var(--text);
+  }
+  .reading .u {
+    color: var(--muted); font-size: 16px;
+  }
+  .grid-readings {
+    display: grid; gap: 14px; grid-template-columns: 1fr 1fr;
+  }
+  .row {
+    display: flex; gap: 8px; flex-wrap: wrap;
+  }
+  button.cmd {
+    background: var(--panel-2); border: 1px solid var(--border);
+    color: var(--text); border-radius: 8px; padding: 8px 12px;
+    cursor: pointer; font-size: 13px;
+  }
+  button.cmd:hover { border-color: var(--accent); }
+  button.cmd.active { border-color: var(--accent); color: var(--accent); }
+  button.cmd[disabled] { opacity: 0.4; cursor: not-allowed; }
+  .meta {
+    color: var(--muted); font-size: 12px;
+    display: grid; gap: 4px; grid-template-columns: 1fr 1fr;
+  }
+  .meta .key { color: var(--muted); }
+  .meta .val { color: var(--text); font-variant-numeric: tabular-nums; }
+  .alarm {
+    padding: 6px 10px; border-radius: 6px; font-weight: 600; font-size: 12px;
+    border: 1px solid var(--border);
+  }
+  .alarm.armed   { color: var(--green); }
+  .alarm.tripped { color: var(--red); border-color: var(--red); }
+  .alarm.off     { color: var(--muted); }
+  dialog.setup {
+    background: var(--panel); color: var(--text); border: 1px solid var(--border);
+    border-radius: 10px; padding: 16px; width: min(420px, 92vw);
+  }
+  dialog.setup h3 { margin: 0 0 10px; font-size: 14px; }
+  dialog.setup label { display: block; margin: 10px 0 4px; font-size: 12px; color: var(--muted); }
+  dialog.setup select { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); padding: 4px 6px; border-radius: 4px; }
+  dialog.setup .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; }
+  footer {
+    padding: 14px; max-width: 880px; margin: 0 auto;
+    color: var(--muted); font-size: 12px;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1 id="title">LP-500 / LP-700</h1>
+  <div style="display:flex;gap:8px;align-items:center">
+    <span id="backend" class="pill"></span>
+    <span id="status" class="pill idle dot">connecting…</span>
+    <button class="cmd" id="setupBtn" type="button">Setup</button>
+  </div>
+</header>
+
+<main>
+  <section class="panel">
+    <h2>Average power</h2>
+    <div class="reading"><span class="v" id="powerAvg">—</span><span class="u" id="powerAvgUnit">W</span></div>
+  </section>
+  <section class="panel">
+    <h2>Peak / Hold</h2>
+    <div class="reading"><span class="v" id="powerPeak">—</span><span class="u" id="powerPeakUnit">W</span></div>
+  </section>
+
+  <section class="panel">
+    <h2>SWR</h2>
+    <div class="reading"><span class="v" id="swr">—</span></div>
+  </section>
+  <section class="panel">
+    <h2>Alarm</h2>
+    <div id="alarmBox" class="alarm off">—</div>
+    <div class="meta" style="margin-top:10px">
+      <div class="key">Power threshold</div><div class="val" id="alarmPower">—</div>
+      <div class="key">SWR threshold</div><div class="val" id="alarmSwr">—</div>
+    </div>
+  </section>
+
+  <section class="panel span-2">
+    <h2>Channel</h2>
+    <div class="row" id="channelRow"></div>
+  </section>
+
+  <section class="panel">
+    <h2>Range</h2>
+    <div class="row">
+      <button class="cmd" id="rangeStep" type="button">Range: <span id="rangeLabel">—</span></button>
+    </div>
+  </section>
+  <section class="panel">
+    <h2>Peak / Avg / Tune</h2>
+    <div class="row">
+      <button class="cmd" data-peak="0" type="button">Average</button>
+      <button class="cmd" data-peak="1" type="button">Peak Hold</button>
+      <button class="cmd" data-peak="2" type="button">Tune</button>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Top mode</h2>
+    <div class="row">
+      <button class="cmd" id="modeStep" type="button">Mode: <span id="topModeLabel">—</span></button>
+    </div>
+  </section>
+  <section class="panel">
+    <h2>Power mode</h2>
+    <div class="row">
+      <button class="cmd" data-pmode="0" type="button">Net (F-R)</button>
+      <button class="cmd" data-pmode="1" type="button">Delivered</button>
+      <button class="cmd" data-pmode="2" type="button">Forward</button>
+    </div>
+  </section>
+
+  <section class="panel span-2">
+    <h2>Meter info</h2>
+    <div class="meta">
+      <div class="key">Callsign</div><div class="val" id="callsign">—</div>
+      <div class="key">Coupler</div><div class="val" id="coupler">—</div>
+      <div class="key">Firmware</div><div class="val" id="firmware">—</div>
+      <div class="key">Active mode</div><div class="val" id="topMode2">—</div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <span>LP-700 Server · LAN-only, no auth · </span>
+  <span id="serverNote">Power/SWR mirroring; Waveform &amp; Spectrum modes are driven on the meter LCD only.</span>
+</footer>
+
+<dialog id="setup" class="setup">
+  <h3>Setup</h3>
+  <label for="logLevel">Server log level</label>
+  <select id="logLevel">
+    <option value="error">ERROR (default)</option>
+    <option value="warn">WARN</option>
+    <option value="info">INFO</option>
+    <option value="debug">DEBUG</option>
+  </select>
+  <p id="setupNote" style="color:var(--muted);font-size:12px;margin-top:14px"></p>
+  <div class="actions">
+    <button class="cmd" id="setupClose" type="button">Close</button>
+  </div>
+</dialog>
+
+<script>
+(() => {
+  const RANGE_NAMES = ["auto","5W","10W","25W","50W","100W","250W","500W","1K","2.5K","5K","10K"];
+  const TOP_MODES = ["power_swr","waveform","spectrum","setup"];
+  const TOP_MODE_LABEL = { power_swr: "Power/SWR", waveform: "Waveform", spectrum: "Spectrum", setup: "Setup" };
+  const PEAK_LABEL = { average: "Average", peak_hold: "Peak Hold", tune: "Tune" };
+
+  const $ = (id) => document.getElementById(id);
+  let last = null;
+  let bootCfg = { allow_control: true, backend: "unknown", title: "LP-500 / LP-700" };
+
+  function setStatus(state, text) {
+    const el = $("status");
+    el.className = "pill dot " + state;
+    el.textContent = text;
+  }
+
+  function fmtPower(w) {
+    if (w == null || isNaN(w)) return ["—", "W"];
+    if (w >= 1000) return [(w/1000).toFixed(2), "kW"];
+    if (w >= 100) return [w.toFixed(0), "W"];
+    return [w.toFixed(1), "W"];
+  }
+
+  function render(data) {
+    const [pa, pau] = fmtPower(data.power_avg_w);
+    const [pp, ppu] = fmtPower(data.peak_mode === "average" ? data.power_peak_w : data.peak_hold_w);
+    $("powerAvg").textContent = pa; $("powerAvgUnit").textContent = pau;
+    $("powerPeak").textContent = pp; $("powerPeakUnit").textContent = ppu;
+    $("swr").textContent = (data.swr ?? 0).toFixed(2);
+    $("rangeLabel").textContent = data.range || "—";
+    $("topModeLabel").textContent = TOP_MODE_LABEL[data.top_mode] || data.top_mode || "—";
+    $("topMode2").textContent = TOP_MODE_LABEL[data.top_mode] || "—";
+    $("callsign").textContent = data.callsign || "—";
+    $("coupler").textContent = data.coupler || "—";
+    $("firmware").textContent = data.firmware_rev || "—";
+
+    const alarm = $("alarmBox");
+    if (!data.alarm_enabled) { alarm.className = "alarm off"; alarm.textContent = "Disabled"; }
+    else if (data.alarm_tripped) { alarm.className = "alarm tripped"; alarm.textContent = "TRIPPED"; }
+    else { alarm.className = "alarm armed"; alarm.textContent = "Armed"; }
+    $("alarmPower").textContent = (data.alarm_power_w ?? 0).toFixed(0) + " W";
+    $("alarmSwr").textContent = (data.alarm_swr ?? 0).toFixed(2);
+
+    // Channel buttons
+    const row = $("channelRow");
+    if (!row.dataset.built) {
+      const labels = ["Auto", "1", "2", "3", "4"];
+      const values = [0, 1, 2, 3, 4];
+      labels.forEach((l, i) => {
+        const b = document.createElement("button");
+        b.className = "cmd"; b.type = "button";
+        b.textContent = "CH " + l;
+        b.addEventListener("click", () => sendCmd("channel_step", values[i]));
+        row.appendChild(b);
+      });
+      row.dataset.built = "1";
+    }
+    const buttons = Array.from(row.children);
+    buttons.forEach((b, i) => {
+      const isAuto = i === 0 ? data.auto_channel : (!data.auto_channel && data.channel === i);
+      b.classList.toggle("active", !!isAuto);
+    });
+
+    // Peak-mode buttons
+    document.querySelectorAll("[data-peak]").forEach(b => {
+      const v = parseInt(b.dataset.peak, 10);
+      const want = ["average", "peak_hold", "tune"][v];
+      b.classList.toggle("active", data.peak_mode === want);
+    });
+    // Power-mode buttons
+    document.querySelectorAll("[data-pmode]").forEach(b => {
+      const v = parseInt(b.dataset.pmode, 10);
+      const want = ["net", "delivered", "forward"][v];
+      b.classList.toggle("active", data.power_mode === want);
+    });
+    last = data;
+  }
+
+  function sendCmd(action, value) {
+    if (!bootCfg.allow_control) return;
+    const id = String(Date.now()) + "-" + Math.floor(Math.random() * 1e6);
+    const msg = { type: "command", id, action };
+    if (typeof value === "number") msg.value = value;
+    try { ws && ws.readyState === 1 && ws.send(JSON.stringify(msg)); } catch {}
+  }
+
+  // Wire up buttons whose handler is straight-forward.
+  $("rangeStep").addEventListener("click", () => {
+    const idx = last ? RANGE_NAMES.indexOf(last.range) : 0;
+    const next = idx < 0 ? 0 : (idx + 1) % RANGE_NAMES.length;
+    sendCmd("range_step", next);
+  });
+  $("modeStep").addEventListener("click", () => {
+    const idx = last ? TOP_MODES.indexOf(last.top_mode) : 0;
+    sendCmd("mode_step");
+    // Optimistic UI update; the server will confirm with telemetry.
+    if (last) { last.top_mode = TOP_MODES[(Math.max(0, idx) + 1) % TOP_MODES.length]; render(last); }
+  });
+  document.querySelectorAll("[data-peak]").forEach(b => {
+    b.addEventListener("click", () => sendCmd("peak_toggle", parseInt(b.dataset.peak, 10)));
+  });
+  document.querySelectorAll("[data-pmode]").forEach(b => {
+    b.addEventListener("click", () => sendCmd("power_mode", parseInt(b.dataset.pmode, 10)));
+  });
+  $("alarmBox").addEventListener("click", () => sendCmd("alarm_toggle", last && last.alarm_enabled ? 0 : 1));
+
+  // Setup overlay
+  const setup = $("setup");
+  $("setupBtn").addEventListener("click", async () => {
+    try {
+      const r = await fetch("/api/log-level"); const j = await r.json();
+      $("logLevel").value = j.level || "error";
+    } catch {}
+    if (typeof setup.showModal === "function") setup.showModal(); else setup.setAttribute("open","");
+    $("setupNote").textContent = "Backend: " + bootCfg.backend + (bootCfg.backend === "simulator" ? " (synthesised data)" : "");
+  });
+  $("setupClose").addEventListener("click", () => setup.close ? setup.close() : setup.removeAttribute("open"));
+  $("logLevel").addEventListener("change", async (e) => {
+    try { await fetch("/api/log-level", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({level: e.target.value}) }); } catch {}
+  });
+
+  // Bootstrap config
+  fetch("/api/config").then(r => r.json()).then(c => {
+    bootCfg = Object.assign(bootCfg, c);
+    if (c.title) { document.title = c.title; $("title").textContent = c.title; }
+    const b = $("backend");
+    if (c.backend === "simulator") { b.className = "pill sim dot"; b.textContent = "SIMULATOR"; }
+    else if (c.backend === "hid")  { b.className = "pill live dot"; b.textContent = "HID"; }
+    else                            { b.className = "pill idle dot"; b.textContent = c.backend || "unknown"; }
+    if (!c.allow_control) {
+      document.querySelectorAll("button.cmd").forEach(b => { if (b.id !== "setupBtn" && b.id !== "setupClose") b.disabled = true; });
+    }
+  }).catch(() => {});
+
+  // WebSocket loop
+  let ws;
+  function connect() {
+    setStatus("idle", "connecting…");
+    const proto = location.protocol === "https:" ? "wss" : "ws";
+    ws = new WebSocket(`${proto}://${location.host}/ws`);
+    ws.addEventListener("open", () => setStatus("live", "connected"));
+    ws.addEventListener("close", () => { setStatus("dead", "disconnected"); setTimeout(connect, 1000); });
+    ws.addEventListener("error", () => setStatus("dead", "error"));
+    ws.addEventListener("message", (e) => {
+      let frame; try { frame = JSON.parse(e.data); } catch { return; }
+      if (frame.type === "telemetry") render(frame.data);
+      else if (frame.type === "heartbeat") setStatus("live", "live");
+      else if (frame.type === "status") console.warn("server:", frame);
+    });
+  }
+  connect();
+})();
+</script>
+</body>
+</html>

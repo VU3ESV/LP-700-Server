@@ -1,0 +1,38 @@
+# LP-700 Server configuration. Install at /etc/lp700-server/config.toml.
+
+[meter]
+# Backend selects the telemetry source:
+#   "auto"      — pick "hid" if a matching device is enumerable, else "simulator"
+#   "hid"       — real LP-500/LP-700 over USB HID (the production setting)
+#   "simulator" — synthesised telemetry for development without hardware
+backend = "auto"
+
+# Microchip-default IDs for the LP-500/700 PIC32 firmware (derived from
+# the KD4Z Node-RED reference flow: vid=1240 (decimal) = 0x04D8, pid=1).
+# If your firmware uses different IDs, set them here, or set both to 0
+# to force product-string matching ("LP-500" / "LP-700"). Run
+# `sudo lp700-server probe -list` to see what's attached.
+vendor_id  = 0x04D8
+product_id = 0x0001
+
+# Drain interval for the OUT-report queue. The IN-report read loop is
+# event-driven; this value mostly controls how fast queued control verbs
+# are written to the device. 25 Hz (40 ms) matches the meter's typical
+# screen update cadence. Range: 10–1000 ms.
+poll_ms = 40
+
+[server]
+# IMPORTANT: this server has NO authentication. Bind it to a LAN interface
+# only; anyone who can reach it can issue control commands. For untrusted
+# networks, front it with a VPN (Tailscale, WireGuard) or set
+# allow_control = false to expose a read-only port.
+#
+# 8089 by default so this server can coexist on the same Pi as
+# LP-100A-Server (which defaults to 8088).
+listen        = "0.0.0.0:8089"
+heartbeat_ms  = 2000
+max_clients   = 32
+allow_control = true
+
+[ui]
+title = "LP-500 / LP-700"

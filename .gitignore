@@ -1,0 +1,24 @@
+# Build output
+/dist/
+/lp700-server
+/lp700-server-*
+
+# Editor / OS
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# Local config / fixtures captured from real hardware (often per-user)
+/config.toml
+/*.bin
+/lp500-fixture*.bin
+/lp700-fixture*.bin
+
+# Go vendoring (we use modules; never check in vendor/)
+/vendor/
+
+# Cached vendor downloads
+/.support/lp500-app/
+/.support/*.zip
+/.support/*.pdf
