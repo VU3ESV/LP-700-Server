@@ -203,6 +203,7 @@ func (o *HIDOwner) runOnce(ctx context.Context) error {
 				"peak_mode", snap.PeakMode,
 				"swr", snap.SWR,
 				"range", snap.Range,
+				"alarm_enabled", snap.AlarmEnabled,
 				"status", snap.StatusMessage,
 				"raw", fmt.Sprintf("%x", frame))
 			select {

@@ -37,7 +37,10 @@ func buildSyntheticFrame(s Snapshot) []byte {
 	if i := indexOf(topModeNames, s.TopMode); i >= 0 {
 		r[OffsetTopMode] = byte(i)
 	}
-	if s.AlarmEnabled {
+	// Wire polarity is inverted: byte 7 is an alarm-DISABLED flag, so
+	// alarm-enabled frames carry 0x00 here and disabled frames carry
+	// 0x01. See OffsetAlarm comment in decode.go.
+	if !s.AlarmEnabled {
 		r[OffsetAlarm] = 1
 	}
 	if i := indexOf(peakModeNames, s.PeakMode); i >= 0 {

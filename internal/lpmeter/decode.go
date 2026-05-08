@@ -60,7 +60,15 @@ const (
 	OffsetChannel     = 4 // 0=Auto, 1..4=CH1..CH4
 	OffsetChannelAuto = 5 // when channel==0 (Auto), the physical channel auto is locked to (1..4)
 	OffsetRange       = 6 // 0..10 = 5W..10KW, 11 = Auto
-	OffsetAlarm       = 7 // 0=off, non-zero=on
+	// OffsetAlarm: byte 7 is an alarm-DISABLED flag (inverted polarity).
+	// 0x00 = alarm armed on the LCD, 0x01 = alarm off. The DataLogger
+	// VB6 source labelled it "Alarm State" without specifying polarity;
+	// confirmed inverted on 2026-05-08 by toggling F4 in CH1 manual mode
+	// (F4 has no effect on Ch-Auto on this firmware) while logging
+	// DEBUG. The decoder negates the byte before populating
+	// AlarmEnabled, so the JSON/UI layer keeps a positive
+	// "alarm_enabled" semantic.
+	OffsetAlarm       = 7
 	OffsetPeakAvg     = 8 // 0=peak_hold, 1=average, 2=tune
 	OffsetAlarmSet    = 9 // alarm setpoint index (encoding TBD)
 	OffsetPeakPwrHi   = 23 // 16-bit BE × 0.2 W — *live* envelope peak this poll cycle
@@ -188,8 +196,9 @@ func Decode(report []byte) (Snapshot, error) {
 		s.TopMode = "power_swr"
 	}
 
-	// Alarm enable + peak-mode are single bytes per the DataLogger map.
-	s.AlarmEnabled = report[OffsetAlarm] != 0
+	// Alarm + peak-mode are single bytes per the DataLogger map. Note
+	// the inverted polarity on byte 7 — see OffsetAlarm comment.
+	s.AlarmEnabled = report[OffsetAlarm] == 0
 	if int(report[OffsetPeakAvg]) < len(peakModeNames) {
 		s.PeakMode = peakModeNames[report[OffsetPeakAvg]]
 	}

@@ -125,7 +125,7 @@ Offsets used by the decoder:
 |     4  | active channel    | 0=Auto, 1..4=CH1..CH4                                             |
 |     5  | channel-auto      | when ch=0, the physical channel auto-mode is locked to (1..4)     |
 |     6  | range index       | 0..10 = 5W..10KW, 11 = Auto                                       |
-|     7  | alarm enable      | 0=off, non-zero=on                                                |
+|     7  | alarm DISABLED    | Inverted polarity: 0x00 = alarm armed on the LCD, 0x01 = alarm off. Confirmed empirically on 2026-05-08 by toggling F4 with channel set to manual CH1 (F4 is a no-op on CH-Auto for this firmware). The decoder negates the byte before populating `alarm_enabled`. |
 |     8  | peak/avg/tune     | 0=Peak Hold, 1=Average, 2=Tune (verified on bench)                |
 |    23  | Peak power Hi     | BE u16; `watts = raw * 0.2`. *Live* envelope peak this poll cycle; decays the moment the rig is unkeyed. (Distinct from offset 0-1's firmware-maintained Peak HOLD.) |
 |    24  | Peak power Lo     |                                                                   |
