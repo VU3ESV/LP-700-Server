@@ -170,15 +170,20 @@ func (o *HIDOwner) runOnce(ctx context.Context) error {
 				if IsSkippable(err) {
 					continue
 				}
-				o.logger.Debug("decode error", "err", err, "raw", fmt.Sprintf("%x", frame[:minInt(16, len(frame))]))
+				o.logger.Debug("decode error", "err", err, "raw", fmt.Sprintf("%x", frame))
 				continue
 			}
+			// Full-frame hex in the debug log lets us see whether the
+			// firmware interleaves multiple IN-report types (e.g. Power/
+			// SWR vs status), which we'd otherwise conflate. Cheap on a
+			// quiet journal because the level defaults to error.
 			o.logger.Debug("frame",
 				"channel", snap.Channel,
 				"power_avg_w", snap.PowerAvgW,
 				"power_peak_w", snap.PowerPeakW,
 				"swr", snap.SWR,
-				"range", snap.Range)
+				"range", snap.Range,
+				"raw", fmt.Sprintf("%x", frame))
 			select {
 			case o.out <- snap:
 			case <-ctx.Done():
