@@ -8,75 +8,79 @@ import (
 )
 
 // ReportSize is the fixed length of every IN/OUT report on the LP-500/700.
-// The mikroElektronika USB HID stack defaults to 64-byte vendor reports,
-// confirmed by the KD4Z Node-RED flow (`.support/LP700NodeRed flow.json`)
-// which polls and parses 64-byte buffers verbatim.
+// 64-byte vendor reports, no Report ID — the wire format is documented in
+// the manufacturer's `LP-500_DataLogger` VB6 source committed at
+// `.support/LP-500_DataLogger/`. Karalabe-style writes still need a Report
+// ID byte prefixed (writeReport in owner.go does that), but the wire-level
+// report itself is 64 bytes.
 const ReportSize = 64
 
-// LP-500/700 Microchip USB IDs. The PIC32 firmware uses the default
-// Microchip VID and product 0x0001 (`vid: "1240" pid: "1"` in the
-// Node-RED flow's HIDConfig — the literals are decimal: 1240 = 0x04D8).
+// LP-500/700 Microchip USB IDs. Confirmed in two independent sources:
+//   - .support/LP-500_DataLogger/USB_HID_Functions.bas:5-6
+//     (`MyVendorID = &H4D8`, `MyProductID = &H1`)
+//   - .support/LP700NodeRed flow.json HIDConfig (`vid: "1240"`, `pid: "1"`,
+//     decimal: 1240 = 0x04D8).
 const (
 	DefaultVendorID  uint16 = 0x04D8
 	DefaultProductID uint16 = 0x0001
 )
 
-// Single-byte ASCII control codes the meter accepts at OUT-report byte[1].
-// Confirmed by the Node-RED flow:
-//
-//	'0' (0x30) — poll: ask for a fresh telemetry frame
-//	'8' (0x38) — change channel (advances to the next of CH1..CH4..Auto)
-//	'9' (0x39) — change range  (advances to the next range step)
-//
-// The remaining verbs below are a working hypothesis based on the
-// front-panel button order and the convention that single-char ASCII
-// commands map to button presses. They are exercised by the
-// hardware-bring-up test plan in ARCHITECTURE.md §11.
+// Wire-level command bytes the firmware accepts at byte 0 of an OUT
+// report. Confirmed by `.support/LP-500_DataLogger/FrmSetup.frm`
+// button handlers (`OutputReportData(1) = N` after the RID prefix at
+// `OutputReportData(0)`).
 const (
-	cmdPoll        byte = '0'
-	cmdMode        byte = '1'
-	cmdAlarm       byte = '2'
-	cmdPeak        byte = '3'
-	cmdSetupEnter  byte = '4'
-	cmdSetupExit   byte = '5'
-	cmdPowerMode   byte = '6'
-	cmdAlarmToggle byte = '7'
-	cmdChannel     byte = '8'
-	cmdRange       byte = '9'
+	cmdPoll    byte = '0' // 48 — poll / get fresh telemetry
+	cmdMode    byte = '7' // 55 — F1 Mode
+	cmdChannel byte = '8' // 56 — F2 CH
+	cmdRange   byte = '9' // 57 — F3 Rng
+	cmdAlarm   byte = ':' // 58 — F4 AL
+	cmdPeak    byte = ';' // 59 — F5 Peak / Avg / Tune
+	cmdSetup   byte = '<' // 60 — F6 Setup (toggles enter/exit)
+	cmdFreeze  byte = '?' // 63 — Freeze (waveform/spectrum only)
 )
 
-// IN-report byte offsets (Node-RED-derived; see CLAUDE.md and the
-// `LP Dice and Slice` function in `.support/LP700NodeRed flow.json`).
+// IN-report byte offsets, 0-based against the 64-byte buffer that Linux
+// hidraw delivers on Read (no RID prefix). These are the DataLogger's
+// `InputReportData(N)` indices minus 1 (since VB6 InputReportData(0) is
+// the Report ID stripped by hidraw on Linux).
+//
+// Source: .support/LP-500_DataLogger/FrmSetup.frm:303-339.
 const (
-	OffsetSWRHi       = 2 // big-endian, split with OffsetSWRLo
-	OffsetTopMode     = 3
-	OffsetChannel     = 4
-	OffsetChannelAuto = 5
-	OffsetRange       = 6
+	OffsetSWRHi       = 2 // 16-bit BE, split with OffsetSWRLo (Node-RED-derived)
+	OffsetTopMode     = 3 // 0=Power/SWR, 1=Waveform, 2=Spectrum, 3=Setup
+	OffsetChannel     = 4 // 1..4
+	OffsetChannelAuto = 5 // when channel==0, this carries the auto-locked phys ch
+	OffsetRange       = 6 // 0..10 = 5W..10KW, 11 = Auto
+	OffsetAlarm       = 7 // 0=off, non-zero=on
+	OffsetPeakAvg     = 8 // 0=average, 1=peak_hold, 2=tune
+	OffsetAlarmSet    = 9 // alarm setpoint index
 	OffsetPeakPwrHi   = 23
 	OffsetPeakPwrLo   = 24
 	OffsetAvgPwrHi    = 25
 	OffsetAvgPwrLo    = 26
-	OffsetPwrMultHi   = 30
+	OffsetBGAvg       = 27 // bargraph display scaling — average
+	OffsetBGPk        = 28 // bargraph display scaling — peak
+	OffsetBGSWR       = 29 // bargraph display scaling — SWR
+	OffsetPwrMultHi   = 30 // active full-scale watts; scale = (raw / 2)
 	OffsetPwrMultLo   = 31
-	OffsetSWRLo       = 37
+	OffsetPeakAvgMode = 32 // Peak/Avg display mode (distinct from peak hold cycle)
+	OffsetFilter      = 33
+	OffsetFreeze      = 34
+	OffsetSWRLo       = 37 // hypothesis from the older Node-RED parser
 )
 
 // PollReport returns the 64-byte OUT report payload that asks the meter
-// for a fresh telemetry frame. The HID owner sends this every tick.
+// for a fresh telemetry frame. Byte 0 = command character ('0'), rest is
+// zero. The HID owner sends this every tick.
 func PollReport() []byte {
 	out := make([]byte, ReportSize)
-	out[1] = cmdPoll
+	out[0] = cmdPoll
 	return out
 }
 
 // Decode parses a 64-byte IN report from the LP-500/700 into a Snapshot.
-//
-// The byte layout is grounded in the KD4Z Node-RED flow that's known to
-// work against real hardware (see CLAUDE.md). Fields whose offsets are
-// not yet known (alarm thresholds, callsign, coupler model, firmware
-// revision) are left at their zero value; they're populated by the
-// simulator backend so the wire shape remains stable for clients.
+// Layout grounded in the manufacturer's DataLogger source.
 func Decode(report []byte) (Snapshot, error) {
 	if len(report) != ReportSize {
 		return Snapshot{}, fmt.Errorf("expected %d-byte report, got %d", ReportSize, len(report))
@@ -84,38 +88,27 @@ func Decode(report []byte) (Snapshot, error) {
 
 	s := Snapshot{Timestamp: time.Now().UTC()}
 
-	// Power: big-endian unsigned 16-bit, scale = ×0.2 W (= raw * 2 / 10
-	// per the Node-RED flow). 0x0000 is the meter idle / no-RF state.
+	// Power: big-endian unsigned 16-bit, scale = ×0.2 W (raw * 2 / 10
+	// per the Node-RED `LP Dice and Slice` function).
 	rawPeak := binary.BigEndian.Uint16(report[OffsetPeakPwrHi : OffsetPeakPwrHi+2])
 	rawAvg := binary.BigEndian.Uint16(report[OffsetAvgPwrHi : OffsetAvgPwrHi+2])
 	s.PowerPeakW = float64(rawPeak) * 0.2
 	s.PowerAvgW = float64(rawAvg) * 0.2
 
 	// SWR: big-endian split bytes (hi at offset 2, lo at offset 37),
-	// scale = / 100. SWR < 1.00 is impossible; treat 0 as "not measured"
-	// rather than rejecting the frame.
+	// scaled /100. Floor at 1.0 — SWR < 1.00 is impossible.
 	rawSWR := uint16(report[OffsetSWRHi])<<8 | uint16(report[OffsetSWRLo])
 	s.SWR = float64(rawSWR) / 100.0
 	if s.SWR < 1.0 {
 		s.SWR = 1.0
 	}
 
-	// Power multiplier: encodes the active full-scale watts. scale =
-	// (mult / 4) per the Node-RED Meter-Range function. Useful for
-	// driving a bargraph; we expose it as the Range string.
-	rawMult := binary.BigEndian.Uint16(report[OffsetPwrMultHi : OffsetPwrMultHi+2])
-	scale := int(rawMult / 2) // == (rawMult * 2) / 4
-	_ = scale                 // kept for future bargraph exposure
-
-	// Channel byte: 0=Auto, 1..4=CH1..CH4. The separate ChannelAuto byte
-	// signals which physical channel the auto-mode is currently locked
-	// to (so we keep both interpretations).
+	// Channel byte: 0=Auto, 1..4=CH1..CH4.
 	chByte := report[OffsetChannel]
 	chAutoByte := report[OffsetChannelAuto]
 	switch {
 	case chByte == 0:
 		s.AutoChannel = true
-		// When auto, ChannelAuto carries the locked physical channel.
 		if chAutoByte >= 1 && chAutoByte <= 4 {
 			s.Channel = int(chAutoByte)
 		} else {
@@ -135,27 +128,29 @@ func Decode(report []byte) (Snapshot, error) {
 	}
 	s.Range = rangeNames[rng]
 
-	// Top-level mode: hypothesis. The Node-RED flow stores `mode` but
-	// doesn't decode it; the user-guide page 4 lists the cycle as
-	// Power/SWR → Waveform → Spectrum (Setup is reachable from the
-	// Setup button rather than the Mode button cycle).
+	// Top-level mode (0..3).
 	if int(report[OffsetTopMode]) < len(topModeNames) {
 		s.TopMode = topModeNames[report[OffsetTopMode]]
 	} else {
 		s.TopMode = "power_swr"
 	}
 
+	// Alarm enable + peak-mode are single bytes per the DataLogger map.
+	s.AlarmEnabled = report[OffsetAlarm] != 0
+	if int(report[OffsetPeakAvg]) < len(peakModeNames) {
+		s.PeakMode = peakModeNames[report[OffsetPeakAvg]]
+	}
+
 	s.Valid = true
 	return s, nil
 }
 
-// errSkipFrame signals to the caller that the report was structurally
-// valid but is not a Power/SWR telemetry frame and should be ignored.
+// errSkipFrame signals that a structurally valid but non-telemetry frame
+// should be ignored. Reserved for future use; the current single-frame-
+// type protocol doesn't emit it.
 var errSkipFrame = errors.New("non-telemetry frame, skipping")
 
-// IsSkippable returns true for the sentinel errSkipFrame so callers can
-// distinguish "frame was a different type, that's fine" from "frame was
-// corrupt".
+// IsSkippable returns true for the sentinel errSkipFrame.
 func IsSkippable(err error) bool { return errors.Is(err, errSkipFrame) }
 
 // KnownVerbs is the set of control-verb names the server accepts on the
@@ -167,41 +162,32 @@ var KnownVerbs = map[string]bool{
 	"range_step":   true,
 	"alarm_toggle": true,
 	"peak_toggle":  true,
-	"setup_enter":  true,
-	"setup_exit":   true,
-	"power_mode":   true,
+	"setup":        true,
+	"freeze":       true,
 }
 
 // EncodeCommand renders a 64-byte OUT report payload for a single named
-// control verb. The on-the-wire convention (byte[0]=0 sync, byte[1]=ASCII
-// command) is taken from the KD4Z Node-RED flow's `Poll Meter Values`,
-// `Change Channel`, and `Change Range` functions (commands '0', '8',
-// '9'). The other verbs use plausible single-char codes that need
-// hardware verification — see ARCHITECTURE.md §11.
-//
-// The `value` parameter is currently unused on the wire (the meter's
-// commands all advance the relevant state by one step), but the verb
-// surface keeps it so a future "set channel directly to N" command can
-// land without a client API break.
+// control verb. Byte 0 is the command character; rest is zero. The
+// `value` parameter is currently unused on the wire (the firmware's
+// commands all advance by one step) but is preserved so a future "set
+// channel directly to N" command can land without a client API break.
 func EncodeCommand(verb string, value int) ([]byte, error) {
 	out := make([]byte, ReportSize)
 	switch verb {
 	case "mode_step":
-		out[1] = cmdMode
+		out[0] = cmdMode
 	case "channel_step":
-		out[1] = cmdChannel
+		out[0] = cmdChannel
 	case "range_step":
-		out[1] = cmdRange
+		out[0] = cmdRange
 	case "alarm_toggle":
-		out[1] = cmdAlarmToggle
+		out[0] = cmdAlarm
 	case "peak_toggle":
-		out[1] = cmdPeak
-	case "setup_enter":
-		out[1] = cmdSetupEnter
-	case "setup_exit":
-		out[1] = cmdSetupExit
-	case "power_mode":
-		out[1] = cmdPowerMode
+		out[0] = cmdPeak
+	case "setup":
+		out[0] = cmdSetup
+	case "freeze":
+		out[0] = cmdFreeze
 	default:
 		return nil, fmt.Errorf("unknown verb %q", verb)
 	}

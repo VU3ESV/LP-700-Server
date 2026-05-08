@@ -5,31 +5,23 @@ import (
 	"testing"
 )
 
-// buildSyntheticFrame produces a 64-byte report that matches the Node-RED-
-// grounded layout in decode.go, so the round-trip can be exercised
-// without hardware. When real fixtures are captured via
-// `lp700-server probe -capture`, drop them in `testdata/` and add a
-// golden test that reads the bytes verbatim.
+// buildSyntheticFrame produces a 64-byte report that matches the layout
+// confirmed by .support/LP-500_DataLogger/FrmSetup.frm.
 func buildSyntheticFrame(s Snapshot) []byte {
 	r := make([]byte, ReportSize)
 
-	// Power: scale=×0.2W → raw = watts * 5 (== watts / 0.2).
-	rawAvg := uint16(s.PowerAvgW / 0.2)
-	rawPeak := uint16(s.PowerPeakW / 0.2)
-	binary.BigEndian.PutUint16(r[OffsetAvgPwrHi:], rawAvg)
-	binary.BigEndian.PutUint16(r[OffsetPeakPwrHi:], rawPeak)
+	// Power: scale=×0.2W → raw = watts * 5.
+	binary.BigEndian.PutUint16(r[OffsetAvgPwrHi:], uint16(s.PowerAvgW/0.2))
+	binary.BigEndian.PutUint16(r[OffsetPeakPwrHi:], uint16(s.PowerPeakW/0.2))
 
-	// SWR: split bytes, scale=/100 → raw = swr * 100.
+	// SWR: split bytes, scale=/100.
 	rawSWR := uint16(s.SWR * 100)
 	r[OffsetSWRHi] = byte(rawSWR >> 8)
 	r[OffsetSWRLo] = byte(rawSWR & 0xff)
 
-	// Range
 	if i := indexOf(rangeNames, s.Range); i >= 0 {
 		r[OffsetRange] = byte(i)
 	}
-
-	// Channel
 	if s.AutoChannel {
 		r[OffsetChannel] = 0
 		if s.Channel >= 1 && s.Channel <= 4 {
@@ -40,48 +32,17 @@ func buildSyntheticFrame(s Snapshot) []byte {
 	} else {
 		r[OffsetChannel] = byte(s.Channel)
 	}
-
-	// Top mode
 	if i := indexOf(topModeNames, s.TopMode); i >= 0 {
 		r[OffsetTopMode] = byte(i)
 	}
-
-	// PowerMult ≈ scale * 4. The decoder doesn't surface scale
-	// directly, but populating the multiplier keeps the frame
-	// realistic for future tests that read it.
-	if scale := scaleFromRange(s.Range); scale > 0 {
-		mult := uint16(scale * 4)
-		binary.BigEndian.PutUint16(r[OffsetPwrMultHi:], mult/2) // raw*2/4 = scale → raw = scale*2
+	if s.AlarmEnabled {
+		r[OffsetAlarm] = 1
 	}
+	if i := indexOf(peakModeNames, s.PeakMode); i >= 0 {
+		r[OffsetPeakAvg] = byte(i)
+	}
+
 	return r
-}
-
-func scaleFromRange(name string) int {
-	switch name {
-	case "5W":
-		return 5
-	case "10W":
-		return 10
-	case "25W":
-		return 25
-	case "50W":
-		return 50
-	case "100W":
-		return 100
-	case "250W":
-		return 250
-	case "500W":
-		return 500
-	case "1K":
-		return 1000
-	case "2.5K":
-		return 2500
-	case "5K":
-		return 5000
-	case "10K":
-		return 10000
-	}
-	return 0
 }
 
 func indexOf(table []string, v string) int {
@@ -95,13 +56,15 @@ func indexOf(table []string, v string) int {
 
 func TestDecodeRoundTripWireFields(t *testing.T) {
 	want := Snapshot{
-		Channel:     2,
-		AutoChannel: false,
-		PowerAvgW:   100, // 100W round-trips exactly via the ×0.2 scale (raw=500)
-		PowerPeakW:  140, // raw=700
-		SWR:         1.06,
-		Range:       "100W",
-		TopMode:     "power_swr",
+		Channel:      2,
+		AutoChannel:  false,
+		PowerAvgW:    100,
+		PowerPeakW:   140,
+		SWR:          1.06,
+		Range:        "100W",
+		TopMode:      "power_swr",
+		AlarmEnabled: true,
+		PeakMode:     "peak_hold",
 	}
 	got, err := Decode(buildSyntheticFrame(want))
 	if err != nil {
@@ -110,7 +73,6 @@ func TestDecodeRoundTripWireFields(t *testing.T) {
 	if !got.Valid {
 		t.Fatal("decoded snapshot is marked invalid")
 	}
-	// We only assert on fields the decoder fills in from real frames.
 	if got.Channel != want.Channel {
 		t.Errorf("channel: got %d, want %d", got.Channel, want.Channel)
 	}
@@ -131,6 +93,12 @@ func TestDecodeRoundTripWireFields(t *testing.T) {
 	}
 	if got.TopMode != want.TopMode {
 		t.Errorf("top mode: got %s, want %s", got.TopMode, want.TopMode)
+	}
+	if got.AlarmEnabled != want.AlarmEnabled {
+		t.Errorf("alarm: got %v, want %v", got.AlarmEnabled, want.AlarmEnabled)
+	}
+	if got.PeakMode != want.PeakMode {
+		t.Errorf("peak_mode: got %s, want %s", got.PeakMode, want.PeakMode)
 	}
 }
 
@@ -166,7 +134,7 @@ func TestDecodeRejectsShortFrame(t *testing.T) {
 
 func TestDecodeRejectsBadChannel(t *testing.T) {
 	r := buildSyntheticFrame(Snapshot{Channel: 1, Range: "100W"})
-	r[OffsetChannel] = 7 // invalid
+	r[OffsetChannel] = 7
 	if _, err := Decode(r); err == nil {
 		t.Fatal("expected error for out-of-range channel byte")
 	}
@@ -187,17 +155,16 @@ func TestEncodeCommandUnknownVerb(t *testing.T) {
 }
 
 func TestEncodeCommandLayout(t *testing.T) {
-	// The poll command and the documented control bytes from the
-	// Node-RED flow must land at byte 1 of the report.
+	// Per the DataLogger source: command character at byte[0] of the
+	// 64-byte payload (the RID prefix is added by writeReport, not here).
 	cases := map[string]byte{
+		"mode_step":    '7',
 		"channel_step": '8',
 		"range_step":   '9',
-		"mode_step":    '1',
-		"alarm_toggle": '7',
-		"peak_toggle":  '3',
-		"setup_enter":  '4',
-		"setup_exit":   '5',
-		"power_mode":   '6',
+		"alarm_toggle": ':',
+		"peak_toggle":  ';',
+		"setup":        '<',
+		"freeze":       '?',
 	}
 	for verb, want := range cases {
 		out, err := EncodeCommand(verb, 0)
@@ -208,11 +175,8 @@ func TestEncodeCommandLayout(t *testing.T) {
 		if len(out) != ReportSize {
 			t.Errorf("%s: got %d-byte report, want %d", verb, len(out), ReportSize)
 		}
-		if out[1] != want {
-			t.Errorf("%s: byte[1]=0x%02x, want 0x%02x", verb, out[1], want)
-		}
-		if out[0] != 0 {
-			t.Errorf("%s: byte[0]=0x%02x, want 0 (sync)", verb, out[0])
+		if out[0] != want {
+			t.Errorf("%s: byte[0]=0x%02x, want 0x%02x", verb, out[0], want)
 		}
 	}
 }
@@ -222,7 +186,7 @@ func TestPollReportShape(t *testing.T) {
 	if len(p) != ReportSize {
 		t.Fatalf("poll size %d, want %d", len(p), ReportSize)
 	}
-	if p[1] != '0' {
-		t.Errorf("poll byte[1]=0x%02x, want '0' (0x30)", p[1])
+	if p[0] != '0' {
+		t.Errorf("poll byte[0]=0x%02x, want '0' (0x30)", p[0])
 	}
 }

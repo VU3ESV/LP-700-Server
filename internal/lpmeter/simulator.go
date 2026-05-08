@@ -138,15 +138,16 @@ func applyCommand(state *Snapshot, cmd command) {
 		}
 		state.PeakMode = peakModeNames[cmd.value]
 		state.PeakHoldW = 0
-	case "setup_enter":
-		state.TopMode = "setup"
-	case "setup_exit":
-		state.TopMode = "power_swr"
-	case "power_mode":
-		if cmd.value < 0 || cmd.value >= len(powerModeNames) {
-			return
+	case "setup":
+		// Toggle in/out of Setup, mirroring the meter's F6 button.
+		if state.TopMode == "setup" {
+			state.TopMode = "power_swr"
+		} else {
+			state.TopMode = "setup"
 		}
-		state.PowerMode = powerModeNames[cmd.value]
+	case "freeze":
+		// Cosmetic in the simulator: no-op (only meaningful in Wfm/Spec
+		// modes on the real meter).
 	}
 }
 

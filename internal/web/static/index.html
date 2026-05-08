@@ -170,14 +170,8 @@
     <h2>Top mode</h2>
     <div class="row">
       <button class="cmd" id="modeStep" type="button">Mode: <span id="topModeLabel">—</span></button>
-    </div>
-  </section>
-  <section class="panel">
-    <h2>Power mode</h2>
-    <div class="row">
-      <button class="cmd" data-pmode="0" type="button">Net (F-R)</button>
-      <button class="cmd" data-pmode="1" type="button">Delivered</button>
-      <button class="cmd" data-pmode="2" type="button">Forward</button>
+      <button class="cmd" id="setupBtnInline" type="button">Setup</button>
+      <button class="cmd" id="freezeBtn" type="button">Freeze</button>
     </div>
   </section>
 
@@ -311,11 +305,10 @@
     // Optimistic UI update; the server will confirm with telemetry.
     if (last) { last.top_mode = TOP_MODES[(Math.max(0, idx) + 1) % TOP_MODES.length]; render(last); }
   });
+  $("setupBtnInline").addEventListener("click", () => sendCmd("setup"));
+  $("freezeBtn").addEventListener("click", () => sendCmd("freeze"));
   document.querySelectorAll("[data-peak]").forEach(b => {
     b.addEventListener("click", () => sendCmd("peak_toggle", parseInt(b.dataset.peak, 10)));
-  });
-  document.querySelectorAll("[data-pmode]").forEach(b => {
-    b.addEventListener("click", () => sendCmd("power_mode", parseInt(b.dataset.pmode, 10)));
   });
   $("alarmBox").addEventListener("click", () => sendCmd("alarm_toggle", last && last.alarm_enabled ? 0 : 1));
 
