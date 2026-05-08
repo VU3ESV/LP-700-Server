@@ -24,12 +24,13 @@ func buildSyntheticFrame(s Snapshot) []byte {
 	}
 	if s.AutoChannel {
 		r[OffsetChannel] = 0
+		if s.Channel >= 1 && s.Channel <= 4 {
+			r[OffsetChannelAuto] = byte(s.Channel)
+		} else {
+			r[OffsetChannelAuto] = 1
+		}
 	} else {
 		r[OffsetChannel] = byte(s.Channel)
-	}
-	// SWR alarm setpoint encoding: idx = (swr - 1.5) / 0.5
-	if s.AlarmSWR >= 1.5 && s.AlarmSWR <= 5.0 {
-		r[OffsetSWRAlarm] = byte((s.AlarmSWR - 1.5) / 0.5)
 	}
 	if i := indexOf(topModeNames, s.TopMode); i >= 0 {
 		r[OffsetTopMode] = byte(i)
@@ -103,41 +104,14 @@ func TestDecodeRoundTripWireFields(t *testing.T) {
 
 func TestDecodeAutoChannel(t *testing.T) {
 	got, err := Decode(buildSyntheticFrame(Snapshot{
-		AutoChannel: true,
+		AutoChannel: true, Channel: 3,
 		PowerAvgW: 50, PowerPeakW: 70, SWR: 1.10, Range: "100W",
 	}))
 	if err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	// In auto mode the displayed channel defaults to 1 (the locked-to
-	// physical channel isn't carried in this byte; offset 5 is the
-	// SWR alarm setpoint).
-	if !got.AutoChannel || got.Channel != 1 {
-		t.Errorf("auto/channel: got auto=%v ch=%d, want auto=true ch=1", got.AutoChannel, got.Channel)
-	}
-}
-
-func TestDecodeSWRAlarmSetpoint(t *testing.T) {
-	cases := map[float64]byte{
-		1.5: 0,
-		2.0: 1,
-		2.5: 2,
-		3.0: 3,
-		5.0: 7,
-	}
-	for swr, want := range cases {
-		r := buildSyntheticFrame(Snapshot{Channel: 1, Range: "100W", AlarmSWR: swr})
-		if r[OffsetSWRAlarm] != want {
-			t.Errorf("encode SWR=%.1f: byte=0x%02x, want 0x%02x", swr, r[OffsetSWRAlarm], want)
-		}
-		got, err := Decode(r)
-		if err != nil {
-			t.Errorf("decode SWR=%.1f: %v", swr, err)
-			continue
-		}
-		if !floatNear(got.AlarmSWR, swr, 0.01) {
-			t.Errorf("decode SWR=%.1f: got %v", swr, got.AlarmSWR)
-		}
+	if !got.AutoChannel || got.Channel != 3 {
+		t.Errorf("auto/channel: got auto=%v ch=%d, want auto=true ch=3", got.AutoChannel, got.Channel)
 	}
 }
 

@@ -41,24 +41,19 @@ const (
 )
 
 // IN-report byte offsets, 0-based against the 64-byte buffer that Linux
-// hidraw delivers on Read (no RID prefix). Most are taken from the
-// DataLogger source's InputReportData(N) indices minus 1, but a couple
-// have been corrected against bench-confirmed diffs:
+// hidraw delivers on Read (no RID prefix). Taken from the DataLogger
+// source's InputReportData(N) indices minus 1.
 //
-//   - Offset 5 was labelled "Auto Ch" in FrmSetup.frm but bench testing
-//     shows it carries the SWR-alarm setpoint index (0=1.5, 1=2.0,
-//     2=2.5, …, 7=5.0). The DataLogger label was misleading.
-//
-// Source: .support/LP-500_DataLogger/FrmSetup.frm:303-339 + bench diff.
+// Source: .support/LP-500_DataLogger/FrmSetup.frm:303-339.
 const (
-	OffsetSWRHi      = 2 // 16-bit BE, split with OffsetSWRLo (Node-RED-derived)
-	OffsetTopMode    = 3 // 0=Power/SWR, 1=Waveform, 2=Spectrum, 3=Setup
-	OffsetChannel    = 4 // 0=Auto, 1..4=CH1..CH4
-	OffsetSWRAlarm   = 5 // setpoint index: alarm_swr = 1.5 + idx * 0.5
-	OffsetRange      = 6 // 0..10 = 5W..10KW, 11 = Auto
-	OffsetAlarm      = 7 // 0=off, non-zero=on
-	OffsetPeakAvg    = 8 // 0=peak_hold, 1=average, 2=tune
-	OffsetAlarmSet   = 9 // power-alarm setpoint index (encoding TBD)
+	OffsetSWRHi       = 2 // 16-bit BE, split with OffsetSWRLo (Node-RED-derived)
+	OffsetTopMode     = 3 // 0=Power/SWR, 1=Waveform, 2=Spectrum, 3=Setup
+	OffsetChannel     = 4 // 0=Auto, 1..4=CH1..CH4
+	OffsetChannelAuto = 5 // when channel==0 (Auto), the physical channel auto is locked to (1..4)
+	OffsetRange       = 6 // 0..10 = 5W..10KW, 11 = Auto
+	OffsetAlarm       = 7 // 0=off, non-zero=on
+	OffsetPeakAvg     = 8 // 0=peak_hold, 1=average, 2=tune
+	OffsetAlarmSet    = 9 // alarm setpoint index (encoding TBD)
 	OffsetPeakPwrHi   = 23
 	OffsetPeakPwrLo   = 24
 	OffsetAvgPwrHi    = 25
@@ -117,16 +112,18 @@ func Decode(report []byte) (Snapshot, error) {
 		s.SWR = 1.0
 	}
 
-	// Channel byte: 0=Auto, 1..4=CH1..CH4.
+	// Channel byte: 0=Auto, 1..4=CH1..CH4. When in Auto, byte 5 carries
+	// the physical channel auto-mode is currently locked to (1..4).
 	chByte := report[OffsetChannel]
+	chAutoByte := report[OffsetChannelAuto]
 	switch {
 	case chByte == 0:
 		s.AutoChannel = true
-		// Default the displayed channel to 1; ideally we'd surface the
-		// physical channel that auto-mode is currently locked to, but
-		// the byte we previously read (offset 5) is actually the SWR
-		// alarm setpoint, not the locked-to channel.
-		s.Channel = 1
+		if chAutoByte >= 1 && chAutoByte <= 4 {
+			s.Channel = int(chAutoByte)
+		} else {
+			s.Channel = 1
+		}
 	case chByte >= 1 && chByte <= 4:
 		s.AutoChannel = false
 		s.Channel = int(chByte)
@@ -134,12 +131,9 @@ func Decode(report []byte) (Snapshot, error) {
 		return s, fmt.Errorf("channel byte 0x%02x out of range", chByte)
 	}
 
-	// SWR alarm setpoint (byte 5): index 0..7 → 1.5..5.0 in 0.5 steps.
-	// Confirmed by bench diff: setpoint 2.0 → byte=1, setpoint 1.5 →
-	// byte=0. Always populated regardless of alarm enable state.
-	if v := report[OffsetSWRAlarm]; v <= 7 {
-		s.AlarmSWR = 1.5 + float64(v)*0.5
-	}
+	// Numeric alarm thresholds (Pwr W, SWR) live somewhere we haven't
+	// pinned yet — likely served by a separate "get setup" command.
+	// Leave them at zero so the UI shows — until we find them.
 
 	// Range byte: 0..10 = 5W..10KW, 11 = Auto.
 	rng := report[OffsetRange]
