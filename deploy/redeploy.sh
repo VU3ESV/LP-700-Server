@@ -115,6 +115,21 @@ build_remote() {
 set -euo pipefail
 echo "host: $(hostname) — kernel: $(uname -r)"
 TS="$(date +%Y%m%d-%H%M%S)"
+
+# ---- bootstrap: ensure user, group membership, service unit ----
+# Idempotent: only acts when something is missing, so this is safe on
+# both first-run and steady-state redeploys.
+if ! id -u lp700 >/dev/null 2>&1; then
+  echo "  creating system user lp700"
+  sudo useradd --system --no-create-home --shell /usr/sbin/nologin lp700
+fi
+sudo usermod -aG plugdev lp700
+
+FIRST_RUN=0
+if [ ! -f /etc/systemd/system/lp700-server.service ]; then
+  FIRST_RUN=1
+fi
+
 sudo systemctl stop lp700-server 2>/dev/null || true
 HEAD
 
@@ -125,13 +140,28 @@ rm -f "/tmp/$(basename "$BIN")"
 HEAD
   fi
 
+  # Force-reinstall flag must be set BEFORE the conditional check below.
   if [ "$UPDATE_SERVICE" -eq 1 ]; then
     cat <<'HEAD'
-sudo install -m 0644 -o root -g root /tmp/lp700-server.service /etc/systemd/system/lp700-server.service
-sudo systemctl daemon-reload
-rm -f /tmp/lp700-server.service
+UPDATE_SERVICE_FORCE=1
 HEAD
   fi
+
+  # Install the service unit when it's missing (first-run bootstrap)
+  # or when --service was passed.
+  cat <<'HEAD'
+if [ "$FIRST_RUN" -eq 1 ] || [ "${UPDATE_SERVICE_FORCE:-0}" -eq 1 ]; then
+  if [ -f /tmp/lp700-server.service ]; then
+    sudo install -m 0644 -o root -g root /tmp/lp700-server.service /etc/systemd/system/lp700-server.service
+    rm -f /tmp/lp700-server.service
+  else
+    echo "lp700-server.service template missing on remote /tmp; first-run bootstrap aborted" >&2
+    exit 1
+  fi
+  sudo systemctl daemon-reload
+  sudo systemctl enable lp700-server
+fi
+HEAD
 
   if [ "$KEEP_CONFIG" -eq 0 ]; then
     cat <<'HEAD'
@@ -209,9 +239,12 @@ fi
 
 # --- 4. Copy files to /tmp/ on the Pi --------------------------------------
 SCP_FILES=()
-[ "$RESTART_ONLY"   -eq 0 ] && SCP_FILES+=("$BIN")
-[ "$UPDATE_SERVICE" -eq 1 ] && SCP_FILES+=(deploy/lp700-server.service)
-[ "$KEEP_CONFIG"    -eq 0 ] && SCP_FILES+=(deploy/99-lp700.rules deploy/config.example.toml)
+# Binary + service unit travel together: when not --restart-only, we
+# always upload the service unit so the remote can self-bootstrap on
+# first run (the in-script FIRST_RUN check decides whether to install
+# it). --service forces a reinstall on subsequent runs.
+[ "$RESTART_ONLY" -eq 0 ] && SCP_FILES+=("$BIN" deploy/lp700-server.service)
+[ "$KEEP_CONFIG"  -eq 0 ] && SCP_FILES+=(deploy/99-lp700.rules deploy/config.example.toml)
 
 step "Copying ${#SCP_FILES[@]} support file(s) + install script to $TARGET:/tmp/"
 if [ "${#SCP_FILES[@]}" -gt 0 ]; then
