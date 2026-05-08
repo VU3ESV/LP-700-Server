@@ -8,26 +8,26 @@ import (
 )
 
 // ReportSize is the fixed length of every IN/OUT report on the LP-500/700.
-// 64-byte vendor reports, no Report ID — the wire format is documented in
-// the manufacturer's `LP-500_DataLogger` VB6 source committed at
-// `.support/LP-500_DataLogger/`. Karalabe-style writes still need a Report
-// ID byte prefixed (writeReport in owner.go does that), but the wire-level
-// report itself is 64 bytes.
+// 64-byte vendor reports, no Report ID — the wire format is documented
+// in the manufacturer's `LP-500_DataLogger` VB6 source (see CLAUDE.md
+// for the source archive URL). Karalabe-style writes still need a
+// Report ID byte prefixed (writeReport in owner.go does that), but the
+// wire-level report itself is 64 bytes.
 const ReportSize = 64
 
 // LP-500/700 Microchip USB IDs. Confirmed in two independent sources:
-//   - .support/LP-500_DataLogger/USB_HID_Functions.bas:5-6
+//   - LP-500_DataLogger `USB_HID_Functions.bas:5-6`
 //     (`MyVendorID = &H4D8`, `MyProductID = &H1`)
-//   - .support/LP700NodeRed flow.json HIDConfig (`vid: "1240"`, `pid: "1"`,
-//     decimal: 1240 = 0x04D8).
+//   - KD4Z's Node-RED flow HIDConfig (`vid: "1240"`, `pid: "1"`;
+//     decimal 1240 = 0x04D8).
 const (
 	DefaultVendorID  uint16 = 0x04D8
 	DefaultProductID uint16 = 0x0001
 )
 
 // Wire-level command bytes the firmware accepts at byte 0 of an OUT
-// report. Confirmed by `.support/LP-500_DataLogger/FrmSetup.frm`
-// button handlers (`OutputReportData(1) = N` after the RID prefix at
+// report. Confirmed by the LP-500_DataLogger `FrmSetup.frm` button
+// handlers (`OutputReportData(1) = N` after the RID prefix at
 // `OutputReportData(0)`).
 const (
 	cmdPoll    byte = '0' // 48 — poll / get fresh telemetry
@@ -44,7 +44,8 @@ const (
 // hidraw delivers on Read (no RID prefix). Taken from the DataLogger
 // source's InputReportData(N) indices minus 1.
 //
-// Source: .support/LP-500_DataLogger/FrmSetup.frm:303-339.
+// Source: LP-500_DataLogger `FrmSetup.frm:303-339` (vendor archive;
+// see CLAUDE.md for URL).
 const (
 	OffsetSWRHi       = 2 // 16-bit BE, split with OffsetSWRLo (Node-RED-derived)
 	OffsetTopMode     = 3 // 0=Power/SWR, 1=Waveform, 2=Spectrum, 3=Setup

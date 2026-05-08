@@ -6,7 +6,8 @@ import (
 )
 
 // buildSyntheticFrame produces a 64-byte report that matches the layout
-// confirmed by .support/LP-500_DataLogger/FrmSetup.frm.
+// confirmed by the LP-500_DataLogger `FrmSetup.frm` source (vendor
+// archive; URL in .support/links.txt).
 func buildSyntheticFrame(s Snapshot) []byte {
 	r := make([]byte, ReportSize)
 

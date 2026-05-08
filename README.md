@@ -150,17 +150,16 @@ echo '{"type":"command","id":"1","action":"peak_toggle"}' | websocat ws://raspbe
 ## Web client
 
 Mirrors the LP-500/700 **Power/SWR** screen — Avg power, Peak power, SWR,
-channel pills (Auto / 1..4), range cycle, Peak/Avg/Tune buttons, top-mode
-pill (Setup, Freeze), alarm enable/tripped indicator, and a status-message
-panel that appears when the meter has an active alert (e.g. *"Reduce power
-or lower range"*).
+channel pills (Auto / 1..4), range cycle, Peak/Avg/Tune buttons, alarm
+enable/tripped indicator.
 
 The Waveform/'Scope and Spectrum modes are *not* mirrored to the web UI;
-the `mode_step` button cycles the meter's on-LCD display so an operator
-can switch into them remotely if needed. Numeric alarm thresholds, callsign,
-coupler model, and firmware revision live in the meter's NVRAM and aren't
-transmitted via USB at all (confirmed by USB pcap audit — see
-[CLAUDE.md](CLAUDE.md)) so those rows are absent from the UI.
+the `mode_step` verb (still accepted on `/ws`) cycles the meter's on-LCD
+display so an operator can switch into them remotely if needed. Numeric
+alarm thresholds, callsign, coupler model, and firmware revision live in
+the meter's NVRAM and aren't transmitted via USB at all (confirmed by USB
+pcap audit — see [CLAUDE.md](CLAUDE.md)) so those rows are absent from
+the UI.
 
 ## Operations cheatsheet
 
@@ -192,14 +191,14 @@ curl -s -XPOST http://localhost:8089/api/log-level -d '{"level":"debug"}'
 │   ├── build-pi.sh               # cross-compile from any Go-equipped host
 │   ├── install.sh                # first-time install on the Pi
 │   └── redeploy.sh               # subsequent updates (build + scp + restart, self-bootstraps)
-└── .support/                     # vendor + community references (read-only)
+└── .support/links.txt            # URLs to the external sources we decoded against
 ```
 
 ## Acknowledgements
 
 Telepost Inc. designed and manufactures the LP-500 and LP-700. This project
 is unaffiliated; product names and trademarks belong to TelePost. The
-manufacturer's VB6 source committed at `.support/LP-500_DataLogger/`,
-the `LP700.pcapng` USB capture of `LP-500_VM.exe`, and KD4Z's
-`LP700NodeRed flow.json` are the three sources that grounded the protocol
-decoding.
+protocol decoding was grounded in the manufacturer's VB6 source archive
+(`LP-500_DataLogger` / `LP-500_VM`, downloadable from telepostinc.com),
+a USB pcap capture of `LP-500_VM.exe` driving a real meter, and KD4Z's
+Node-RED `LP Dice and Slice` parser. URLs in `.support/links.txt`.

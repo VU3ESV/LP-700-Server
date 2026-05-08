@@ -29,12 +29,8 @@ LP-700-Server/
 │   └── web/static/      # reference web client (embedded via go:embed)
 ├── deploy/              # build-pi.sh, install.sh, redeploy.sh,
 │                        #   systemd unit, udev rule, config.example.toml
-└── .support/            # vendor + community references (read-only)
-    ├── LP-500_DataLogger/      # manufacturer's VB6 source — protocol ground truth
-    ├── LP-500_VM/              # manufacturer's compiled Windows app + ActiveX UI control
-    ├── LP700.pcapng            # USBPcap capture of LP-500_VM driving a real meter
-    ├── LP700NodeRed flow.json  # KD4Z's working Node-RED flow (LP-500/700 HID DIRECT v1.2)
-    └── links.txt
+└── .support/
+    └── links.txt           # URLs to vendor archive + companion repos (originals not in-tree)
 ```
 
 ## Stack decisions (locked in)
@@ -62,18 +58,20 @@ Picked via `meter.backend` in config or `-backend` flag:
 
 ## LP-500 / LP-700 USB HID protocol
 
-Grounded in three sources, in order of authority:
+Grounded in three external sources (URLs in `.support/links.txt` —
+originals not committed to keep the repo light):
 
-1. **`.support/LP-500_DataLogger/`** — the manufacturer's own VB6 source.
-   `USB_HID_Functions.bas` shows the Win32 ReadFile/WriteFile convention
-   (Report ID byte at buffer[0], 64-byte payload follows). `FrmSetup.frm`
-   labels every documented field of the IN report and maps each F-button
-   to its OUT command byte.
-2. **`.support/LP700.pcapng`** — full Wireshark/USBPcap capture of the
-   vendor's `LP-500_VM.exe` driving a real meter. Confirmed the wire
-   conventions and revealed the cmd-`'6'` status-message slot.
-3. **`.support/LP700NodeRed flow.json`** — KD4Z's `LP Dice and Slice`
-   parser, used to corroborate power/SWR scaling.
+1. **Manufacturer VB6 archive (LP-500_DataLogger / LP-500_VM)** —
+   downloadable from `telepostinc.com`. `USB_HID_Functions.bas` shows
+   the Win32 ReadFile/WriteFile convention (Report ID byte at
+   buffer[0], 64-byte payload follows). `FrmSetup.frm` labels every
+   documented field of the IN report and maps each F-button to its
+   OUT command byte.
+2. **USBPcap capture of `LP-500_VM.exe` driving a real meter.**
+   Confirmed the wire conventions and revealed the cmd-`'6'`
+   status-message slot.
+3. **KD4Z's Node-RED `LP Dice and Slice` parser** — used to
+   corroborate power/SWR scaling.
 
 ### Connection
 
