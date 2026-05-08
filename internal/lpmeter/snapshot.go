@@ -52,6 +52,12 @@ type Snapshot struct {
 	TopMode     string `json:"top_mode"`     // power_swr | waveform | spectrum | setup
 	FirmwareRev string `json:"firmware_rev"` // e.g. "v2.5.2b4"
 
+	// Status / alert message text from the meter, e.g. "Reduce power or
+	// lower range". Populated when the cmd '6' response carries ASCII
+	// at bytes 40..63 (see CLAUDE.md "Telepost VM USB pcap analysis").
+	// Empty when the meter has no active alert.
+	StatusMessage string `json:"status_message"`
+
 	// Valid is false for snapshots that the decoder produced but failed
 	// internal sanity checks. The hub does not broadcast invalid
 	// snapshots.
@@ -78,7 +84,8 @@ func (s Snapshot) CloseEnough(o Snapshot) bool {
 		s.Callsign == o.Callsign &&
 		s.Coupler == o.Coupler &&
 		s.TopMode == o.TopMode &&
-		s.FirmwareRev == o.FirmwareRev
+		s.FirmwareRev == o.FirmwareRev &&
+		s.StatusMessage == o.StatusMessage
 }
 
 func floatNear(a, b, eps float64) bool {

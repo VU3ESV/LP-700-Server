@@ -175,6 +175,11 @@
     </div>
   </section>
 
+  <section class="panel span-2" id="statusPanel" style="display:none">
+    <h2>Status message</h2>
+    <div id="statusText" class="alarm tripped">—</div>
+  </section>
+
   <section class="panel span-2">
     <h2>Meter info</h2>
     <div class="meta">
@@ -256,6 +261,17 @@
     // rather than misleading 0 W / 0.00 placeholders.
     $("alarmPower").textContent = data.alarm_power_w > 0 ? data.alarm_power_w.toFixed(0) + " W" : "—";
     $("alarmSwr").textContent = data.alarm_swr > 0 ? data.alarm_swr.toFixed(2) : "—";
+
+    // Status message panel — show only when the meter is reporting one
+    // (e.g. "Reduce power or lower range" when SWR is high).
+    const statusPanel = $("statusPanel");
+    const statusText = $("statusText");
+    if (data.status_message && data.status_message.length > 0) {
+      statusText.textContent = data.status_message;
+      statusPanel.style.display = "";
+    } else {
+      statusPanel.style.display = "none";
+    }
 
     // Channel buttons
     const row = $("channelRow");

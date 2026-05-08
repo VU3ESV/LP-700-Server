@@ -152,11 +152,18 @@ func (o *HIDOwner) runOnce(ctx context.Context) error {
 	}()
 
 	// pollTicker drives both the active poll ('0' command) and the
-	// drain of any queued control verbs from clients. The Node-RED
-	// reference flow polls explicitly to get fresh telemetry; matching
-	// that here.
+	// drain of any queued control verbs from clients. Most ticks send
+	// the live-telemetry poll; one in `statusEveryN` sends cmd '6'
+	// instead, which asks the meter to populate bytes 40..63 of its
+	// next IN report with the current ASCII alert message.
+	const statusEveryN = 10
 	pollTicker := time.NewTicker(o.pollEvery)
 	defer pollTicker.Stop()
+	tickN := 0
+	// Sticky status message: only cmd-'6' responses carry it; carry it
+	// forward across plain cmd-'0' responses so clients see a stable
+	// value rather than text-then-blank flicker.
+	var lastStatus string
 
 	for {
 		select {
@@ -173,6 +180,16 @@ func (o *HIDOwner) runOnce(ctx context.Context) error {
 				o.logger.Debug("decode error", "err", err, "raw", fmt.Sprintf("%x", frame))
 				continue
 			}
+			// Bytes 40..63 only carry an ASCII status message after a
+			// cmd '6' poll. After cmd '0' that slot holds binary
+			// scope/spec data and Decode returns "". Carry the last
+			// non-empty message forward so it stays visible to clients
+			// between cmd-'6' refreshes.
+			if snap.StatusMessage == "" {
+				snap.StatusMessage = lastStatus
+			} else {
+				lastStatus = snap.StatusMessage
+			}
 			// Full-frame hex in the debug log lets us see whether the
 			// firmware interleaves multiple IN-report types (e.g. Power/
 			// SWR vs status), which we'd otherwise conflate. Cheap on a
@@ -183,6 +200,7 @@ func (o *HIDOwner) runOnce(ctx context.Context) error {
 				"power_peak_w", snap.PowerPeakW,
 				"swr", snap.SWR,
 				"range", snap.Range,
+				"status", snap.StatusMessage,
 				"raw", fmt.Sprintf("%x", frame))
 			select {
 			case o.out <- snap:
@@ -195,7 +213,12 @@ func (o *HIDOwner) runOnce(ctx context.Context) error {
 			if err := o.drainCommands(dev); err != nil {
 				return err
 			}
-			if err := writeReport(dev, PollReport()); err != nil {
+			tickN++
+			payload := PollReport()
+			if tickN%statusEveryN == 0 {
+				payload = StatusReport()
+			}
+			if err := writeReport(dev, payload); err != nil {
 				return fmt.Errorf("poll: %w", err)
 			}
 		}

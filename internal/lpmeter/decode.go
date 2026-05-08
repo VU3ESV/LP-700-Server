@@ -78,6 +78,18 @@ func PollReport() []byte {
 	return out
 }
 
+// StatusReport returns the OUT payload that asks the meter to populate
+// bytes 40..63 of the next telemetry frame with its current ASCII alert
+// message ("Reduce power or lower range" etc.). Per the LP700.pcapng
+// analysis the Telepost VM cycles through cmd '0' (live telemetry) and
+// cmd '6' (status text) along with `1`..`5` (scope/spec sample buffers
+// that v1 ignores).
+func StatusReport() []byte {
+	out := make([]byte, ReportSize)
+	out[0] = '6'
+	return out
+}
+
 // Decode parses a 64-byte IN report from the LP-500/700 into a Snapshot.
 // Layout grounded in the manufacturer's DataLogger source.
 func Decode(report []byte) (Snapshot, error) {
@@ -155,8 +167,53 @@ func Decode(report []byte) (Snapshot, error) {
 		s.PeakMode = peakModeNames[report[OffsetPeakAvg]]
 	}
 
+	// Bytes 40..63 are the secondary data slot whose content depends on
+	// which OUT command was last sent. After cmd '6' it carries an ASCII
+	// status message (e.g. "Reduce power or lower range" when SWR is
+	// high). Detect ASCII-text frames by checking that the slot contains
+	// printable bytes; ignore otherwise (scope/spec samples).
+	s.StatusMessage = extractStatusMessage(report[40:])
+
 	s.Valid = true
 	return s, nil
+}
+
+// extractStatusMessage returns the trimmed ASCII message embedded in the
+// secondary slot of a telemetry frame, or "" if the slot doesn't look
+// like text (which is the common case — the slot also carries scope/spec
+// sample data after cmd '0'..'5').
+func extractStatusMessage(slot []byte) string {
+	// The slot is text-ish when most of its non-zero bytes are printable
+	// ASCII. Scope/spec samples typically carry tiny binary values
+	// (0..3) which fail this filter.
+	printable, nonzero := 0, 0
+	for _, b := range slot {
+		if b == 0 {
+			continue
+		}
+		nonzero++
+		if b >= 0x20 && b < 0x7f {
+			printable++
+		}
+	}
+	if nonzero < 4 || printable*4 < nonzero*3 {
+		// Less than ~75% printable, or very sparse — not a message.
+		return ""
+	}
+	out := make([]byte, 0, len(slot))
+	for _, b := range slot {
+		if b == 0 {
+			break
+		}
+		if b >= 0x20 && b < 0x7f {
+			out = append(out, b)
+		}
+	}
+	// Trim trailing whitespace.
+	for len(out) > 0 && out[len(out)-1] == ' ' {
+		out = out[:len(out)-1]
+	}
+	return string(out)
 }
 
 // errSkipFrame signals that a structurally valid but non-telemetry frame

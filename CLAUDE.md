@@ -143,14 +143,43 @@ after. Same result is expected for Pwr Alarm.
 
 These values are stored in the meter's NVRAM and shown on the LCD but
 **the firmware doesn't transmit them in response to the standard `'0'`
-poll**. To surface them in the server we'd need to:
-- find an undocumented OUT command that returns a setup block, OR
-- USB-sniff the Telepost VM's traffic to learn what it sends.
-
-Until then, the snapshot's `AlarmPowerW`, `AlarmSWR`, `Callsign`,
+poll**. The snapshot's `AlarmPowerW`, `AlarmSWR`, `Callsign`,
 `Coupler`, `FirmwareRev` fields stay zero/empty when reading real
 frames; the simulator populates them so the wire shape is stable for
 clients. The web UI shows "—" instead of misleading "0 W / 0.00".
+
+### What the Telepost VM does (USB pcap analysis)
+
+A Wireshark/USBPcap capture of the vendor's `LP-500_VM.exe` running
+against a real meter is committed at [`.support/LP700.pcapng`](.support/LP700.pcapng).
+The VM cycles through **nine OUT commands** every ~500 ms:
+
+| OUT cmd | What the VM asks for                                    |
+|---------|---------------------------------------------------------|
+| `'0'` 0x30 | Live telemetry poll (the same one this server uses) |
+| `'1'` 0x31 | Unknown — all-zero `[40..63]` payload in our capture |
+| `'2'` 0x32 | Scope / spectrum sample buffer A                     |
+| `'3'` 0x33 | Scope / spectrum sample buffer B                     |
+| `'4'` 0x34 | Scope / spectrum sample buffer C                     |
+| `'5'` 0x35 | Scope / spectrum sample buffer D                     |
+| `'6'` 0x36 | **Status / alert message** as ASCII at bytes 40..63  |
+| `'7'` 0x37 | F1 Mode button (cycle top mode) — control, not query |
+| `'<'` 0x3c | F6 Setup button — control, not query                 |
+
+The response to *any* of these commands is the same 64-byte
+telemetry frame, but **bytes 40..63 are a secondary slot** whose
+content depends on the last command sent: scope/spec samples for
+`'0'..'5'`, ASCII status text for `'6'`, all-zero for `'1'`.
+
+Example status message captured in response to `'6'` while the meter
+showed an SWR alarm: bytes 40..63 read `"Reduce power or lower ra"`
+(truncated by the 64-byte report length).
+
+**Setup data we still can't get:** alarm thresholds, callsign, coupler
+model, firmware revision did not appear in the captured 5500+ frames.
+Possible reasons: the VM may only fetch them at startup outside the
+captured window, or they're embedded within the scope/spec sample
+buffers in some encoded form that this analysis didn't crack.
 
 ### OUT-report control bytes (DataLogger button map)
 
