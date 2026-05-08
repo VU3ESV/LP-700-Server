@@ -170,11 +170,8 @@ the meter's **Power/SWR** screen:
 - **Channel pills** — Auto / 1 / 2 / 3 / 4 (highlighted = active)
 - **Range** — single button cycling through the 12 settings
 - **Peak / Avg / Tune** — three buttons (highlighted = active mode)
-- **Top mode** — Power/SWR / Setup / Freeze buttons
 - **Alarm** pill — Disabled / Armed / TRIPPED (numeric thresholds note
   points to the meter LCD; firmware doesn't expose them)
-- **Status message** panel — appears only when meter has an active
-  alert (e.g. "Reduce power or lower range")
 - **Connection state** pill driven by heartbeat + `status` frames
 - **Backend** indicator (HID vs SIMULATOR) — obvious when looking at
   synthesised data

@@ -85,12 +85,6 @@
   button.cmd:hover { border-color: var(--accent); }
   button.cmd.active { border-color: var(--accent); color: var(--accent); }
   button.cmd[disabled] { opacity: 0.4; cursor: not-allowed; }
-  .meta {
-    color: var(--muted); font-size: 12px;
-    display: grid; gap: 4px; grid-template-columns: 1fr 1fr;
-  }
-  .meta .key { color: var(--muted); }
-  .meta .val { color: var(--text); font-variant-numeric: tabular-nums; }
   .alarm {
     padding: 6px 10px; border-radius: 6px; font-weight: 600; font-size: 12px;
     border: 1px solid var(--border);
@@ -106,10 +100,6 @@
   dialog.setup label { display: block; margin: 10px 0 4px; font-size: 12px; color: var(--muted); }
   dialog.setup select { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); padding: 4px 6px; border-radius: 4px; }
   dialog.setup .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; }
-  footer {
-    padding: 14px; max-width: 880px; margin: 0 auto;
-    color: var(--muted); font-size: 12px;
-  }
 </style>
 </head>
 <body>
@@ -165,36 +155,7 @@
       <button class="cmd" data-peak="2" type="button">Tune</button>
     </div>
   </section>
-
-  <section class="panel">
-    <h2>Top mode</h2>
-    <div class="row">
-      <button class="cmd" id="modeStep" type="button">Mode: <span id="topModeLabel">—</span></button>
-      <button class="cmd" id="setupBtnInline" type="button">Setup</button>
-      <button class="cmd" id="freezeBtn" type="button">Freeze</button>
-    </div>
-  </section>
-
-  <section class="panel span-2" id="statusPanel" style="display:none">
-    <h2>Status message</h2>
-    <div id="statusText" class="alarm tripped">—</div>
-  </section>
-
-  <section class="panel span-2">
-    <h2>Meter info</h2>
-    <div class="meta">
-      <div class="key">Callsign</div><div class="val" id="callsign">—</div>
-      <div class="key">Coupler</div><div class="val" id="coupler">—</div>
-      <div class="key">Firmware</div><div class="val" id="firmware">—</div>
-      <div class="key">Active mode</div><div class="val" id="topMode2">—</div>
-    </div>
-  </section>
 </main>
-
-<footer>
-  <span>LP-700 Server · LAN-only, no auth · </span>
-  <span id="serverNote">Power/SWR mirroring; Waveform &amp; Spectrum modes are driven on the meter LCD only.</span>
-</footer>
 
 <dialog id="setup" class="setup">
   <h3>Setup</h3>
@@ -214,9 +175,6 @@
 <script>
 (() => {
   const RANGE_NAMES = ["auto","5W","10W","25W","50W","100W","250W","500W","1K","2.5K","5K","10K"];
-  const TOP_MODES = ["power_swr","waveform","spectrum","setup"];
-  const TOP_MODE_LABEL = { power_swr: "Power/SWR", waveform: "Waveform", spectrum: "Spectrum", setup: "Setup" };
-  const PEAK_LABEL = { average: "Average", peak_hold: "Peak Hold", tune: "Tune" };
 
   const $ = (id) => document.getElementById(id);
   let last = null;
@@ -246,32 +204,11 @@
     $("powerPeak").textContent = pp; $("powerPeakUnit").textContent = ppu;
     $("swr").textContent = (data.swr ?? 0).toFixed(2);
     $("rangeLabel").textContent = data.range || "—";
-    $("topModeLabel").textContent = TOP_MODE_LABEL[data.top_mode] || data.top_mode || "—";
-    $("topMode2").textContent = TOP_MODE_LABEL[data.top_mode] || "—";
-    $("callsign").textContent = data.callsign || "—";
-    $("coupler").textContent = data.coupler || "—";
-    $("firmware").textContent = data.firmware_rev || "—";
 
     const alarm = $("alarmBox");
     if (!data.alarm_enabled) { alarm.className = "alarm off"; alarm.textContent = "Disabled"; }
     else if (data.alarm_tripped) { alarm.className = "alarm tripped"; alarm.textContent = "TRIPPED"; }
     else { alarm.className = "alarm armed"; alarm.textContent = "Armed"; }
-    // Numeric thresholds aren't yet decoded from the wire (the IN report
-    // beyond offset 34 isn't fully mapped). Show — until we locate them
-    // rather than misleading 0 W / 0.00 placeholders.
-    // (Threshold rows were removed — the LP-500/700 firmware doesn't
-    // transmit numeric alarm setpoints over USB. See CLAUDE.md.)
-
-    // Status message panel — show only when the meter is reporting one
-    // (e.g. "Reduce power or lower range" when SWR is high).
-    const statusPanel = $("statusPanel");
-    const statusText = $("statusText");
-    if (data.status_message && data.status_message.length > 0) {
-      statusText.textContent = data.status_message;
-      statusPanel.style.display = "";
-    } else {
-      statusPanel.style.display = "none";
-    }
 
     // Channel buttons
     const row = $("channelRow");
@@ -299,12 +236,6 @@
       const want = ["peak_hold", "average", "tune"][v];
       b.classList.toggle("active", data.peak_mode === want);
     });
-    // Power-mode buttons
-    document.querySelectorAll("[data-pmode]").forEach(b => {
-      const v = parseInt(b.dataset.pmode, 10);
-      const want = ["net", "delivered", "forward"][v];
-      b.classList.toggle("active", data.power_mode === want);
-    });
     last = data;
   }
 
@@ -316,20 +247,11 @@
     try { ws && ws.readyState === 1 && ws.send(JSON.stringify(msg)); } catch {}
   }
 
-  // Wire up buttons whose handler is straight-forward.
   $("rangeStep").addEventListener("click", () => {
     const idx = last ? RANGE_NAMES.indexOf(last.range) : 0;
     const next = idx < 0 ? 0 : (idx + 1) % RANGE_NAMES.length;
     sendCmd("range_step", next);
   });
-  $("modeStep").addEventListener("click", () => {
-    const idx = last ? TOP_MODES.indexOf(last.top_mode) : 0;
-    sendCmd("mode_step");
-    // Optimistic UI update; the server will confirm with telemetry.
-    if (last) { last.top_mode = TOP_MODES[(Math.max(0, idx) + 1) % TOP_MODES.length]; render(last); }
-  });
-  $("setupBtnInline").addEventListener("click", () => sendCmd("setup"));
-  $("freezeBtn").addEventListener("click", () => sendCmd("freeze"));
   document.querySelectorAll("[data-peak]").forEach(b => {
     b.addEventListener("click", () => sendCmd("peak_toggle", parseInt(b.dataset.peak, 10)));
   });
