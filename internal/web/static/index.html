@@ -129,7 +129,7 @@
     <div class="reading"><span class="v" id="powerAvg">—</span><span class="u" id="powerAvgUnit">W</span></div>
   </section>
   <section class="panel">
-    <h2>Peak / Hold</h2>
+    <h2>Peak power</h2>
     <div class="reading"><span class="v" id="powerPeak">—</span><span class="u" id="powerPeakUnit">W</span></div>
   </section>
 
@@ -231,8 +231,12 @@
   }
 
   function render(data) {
+    // Avg and Peak are always live in the wire frame regardless of which
+    // mode (Avg/Peak-Hold/Tune) the meter's large numeric display is in,
+    // mirroring the small "57 AV / 94 PK" LCD indicators that are always
+    // visible on the LP-500/700.
     const [pa, pau] = fmtPower(data.power_avg_w);
-    const [pp, ppu] = fmtPower(data.peak_mode === "average" ? data.power_peak_w : data.peak_hold_w);
+    const [pp, ppu] = fmtPower(data.power_peak_w);
     $("powerAvg").textContent = pa; $("powerAvgUnit").textContent = pau;
     $("powerPeak").textContent = pp; $("powerPeakUnit").textContent = ppu;
     $("swr").textContent = (data.swr ?? 0).toFixed(2);
