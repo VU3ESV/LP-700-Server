@@ -246,3 +246,39 @@ func TestPollReportShape(t *testing.T) {
 		t.Errorf("poll byte[0]=0x%02x, want '0' (0x30)", p[0])
 	}
 }
+
+func TestVerbAvailableInState(t *testing.T) {
+	tests := []struct {
+		name      string
+		verb      string
+		snap      *Snapshot
+		wantBlock bool
+	}{
+		{"nil snap lets anything through", "range_step", nil, false},
+		{"range_step OK in manual channel", "range_step",
+			&Snapshot{AutoChannel: false, Channel: 2}, false},
+		{"range_step blocked in auto-channel", "range_step",
+			&Snapshot{AutoChannel: true, Channel: 1}, true},
+		{"alarm_toggle blocked in auto-channel", "alarm_toggle",
+			&Snapshot{AutoChannel: true, Channel: 1}, true},
+		{"alarm_toggle OK in manual channel", "alarm_toggle",
+			&Snapshot{AutoChannel: false, Channel: 3}, false},
+		{"channel_step always allowed", "channel_step",
+			&Snapshot{AutoChannel: true, Channel: 1}, false},
+		{"mode_step always allowed", "mode_step",
+			&Snapshot{AutoChannel: true, Channel: 1}, false},
+		{"peak_toggle always allowed (works in auto-ch)", "peak_toggle",
+			&Snapshot{AutoChannel: true, Channel: 1}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := VerbAvailableInState(tt.verb, tt.snap)
+			if tt.wantBlock && got == "" {
+				t.Errorf("expected block reason, got empty")
+			}
+			if !tt.wantBlock && got != "" {
+				t.Errorf("expected no block, got %q", got)
+			}
+		})
+	}
+}
