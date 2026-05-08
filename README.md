@@ -191,8 +191,15 @@ curl -s -XPOST http://localhost:8089/api/log-level -d '{"level":"debug"}'
 │   ├── build-pi.sh               # cross-compile from any Go-equipped host
 │   ├── install.sh                # first-time install on the Pi
 │   └── redeploy.sh               # subsequent updates (build + scp + restart, self-bootstraps)
+├── examples/
+│   └── node-red/                 # importable Node-RED flow + migration guide
 └── .support/links.txt            # URLs to the external sources we decoded against
 ```
+
+For Node-RED users coming from KD4Z's *LP-500/700 HID DIRECT* flow, see
+[examples/node-red/](examples/node-red/) for a drop-in replacement that
+talks to `/ws` instead of `/dev/hidraw*` (output `msg.payload` shape is
+unchanged, so downstream nodes keep working).
 
 ## Acknowledgements
 
