@@ -108,6 +108,17 @@ The VM also cycles `'1'`–`'5'` to retrieve scope/spectrum sample buffers
 into bytes 40..63 of the response. v1 ignores those modes; the on-meter
 LCD is the only display.
 
+**Firmware quirk — per-channel verbs in auto-channel mode:** `range_step`
+(F3) and `alarm_toggle` (F4) are per-channel settings. When the meter is
+in auto-channel mode (IN byte 4 == 0), the firmware silently ignores
+these presses — there is no single "current channel" to mutate. The hub
+intercepts these in `lpmeter.VerbAvailableInState` and NACKs with a
+reason instead of writing a guaranteed-no-op OUT report; clients should
+prompt the user to `channel_step` to a manual channel (CH1–4) first.
+Confirmed empirically on 2026-05-09 by sending each verb 5× in auto-ch
+mode and observing no change to offsets 6 / 7. `mode_step`, `channel_step`,
+`peak_toggle`, `setup`, `freeze` all work in auto-ch.
+
 ### IN-report decode
 
 The decoder rejects "ack" frames (any frame whose byte[0] is non-zero
@@ -124,8 +135,8 @@ Offsets used by the decoder:
 |     3  | top mode          | 0=Power/SWR, 1=Waveform, 2=Spectrum, 3=Setup                      |
 |     4  | active channel    | 0=Auto, 1..4=CH1..CH4                                             |
 |     5  | channel-auto      | when ch=0, the physical channel auto-mode is locked to (1..4)     |
-|     6  | range index       | 0..10 = 5W..10KW, 11 = Auto                                       |
-|     7  | alarm DISABLED    | Inverted polarity: 0x00 = alarm armed on the LCD, 0x01 = alarm off. Confirmed empirically on 2026-05-08 by toggling F4 with channel set to manual CH1 (F4 is a no-op on CH-Auto for this firmware). The decoder negates the byte before populating `alarm_enabled`. |
+|     6  | range index       | 0..10 = 5W..10KW, 11 = Auto. Per-channel; F3 is a no-op when byte 4 == 0 (auto-channel) — see firmware-quirk note above. |
+|     7  | alarm DISABLED    | Inverted polarity: 0x00 = alarm armed on the LCD, 0x01 = alarm off. Confirmed empirically on 2026-05-08 by toggling F4 with channel set to manual CH1 (F4 is a no-op on CH-Auto for this firmware — same gating as F3 / range). The decoder negates the byte before populating `alarm_enabled`. |
 |     8  | peak/avg/tune     | 0=Peak Hold, 1=Average, 2=Tune (verified on bench)                |
 |    23  | Peak power Hi     | BE u16; `watts = raw * 0.2`. *Live* envelope peak this poll cycle; decays the moment the rig is unkeyed. (Distinct from offset 0-1's firmware-maintained Peak HOLD.) |
 |    24  | Peak power Lo     |                                                                   |

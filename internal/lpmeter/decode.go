@@ -59,7 +59,10 @@ const (
 	OffsetTopMode     = 3 // 0=Power/SWR, 1=Waveform, 2=Spectrum, 3=Setup
 	OffsetChannel     = 4 // 0=Auto, 1..4=CH1..CH4
 	OffsetChannelAuto = 5 // when channel==0 (Auto), the physical channel auto is locked to (1..4)
-	OffsetRange       = 6 // 0..10 = 5W..10KW, 11 = Auto
+	// OffsetRange: byte 6, 0..10 = 5W..10KW, 11 = Auto. Per-channel; the
+	// F3 (Range) press is a no-op when byte 4 == 0 (auto-channel), same
+	// gating as the alarm byte at offset 7 — see VerbAvailableInState.
+	OffsetRange       = 6
 	// OffsetAlarm: byte 7 is an alarm-DISABLED flag (inverted polarity).
 	// 0x00 = alarm armed on the LCD, 0x01 = alarm off. The DataLogger
 	// VB6 source labelled it "Alarm State" without specifying polarity;
@@ -271,6 +274,33 @@ var KnownVerbs = map[string]bool{
 	"peak_toggle":  true,
 	"setup":        true,
 	"freeze":       true,
+}
+
+// VerbAvailableInState returns "" if the firmware will act on the verb
+// in the given state, or a reason string explaining why it will be
+// silently ignored.
+//
+// LP-500/700 firmware quirk: F3 (Range) and F4 (Alarm) are per-channel
+// settings. When the meter is in auto-channel mode (IN byte 4 == 0,
+// snap.AutoChannel == true), the firmware ignores both presses — there
+// is no single "current channel" to mutate. Confirmed empirically on
+// 2026-05-09 by sending range_step / alarm_toggle 5× each in auto-ch
+// mode and observing no change in offsets 6 / 7. The F4 case was
+// already noted at decode.go OffsetAlarm; F3 has the same gating.
+//
+// snap may be nil (no telemetry observed yet on this connection), in
+// which case we let the verb through and let the firmware decide.
+func VerbAvailableInState(verb string, snap *Snapshot) string {
+	if snap == nil {
+		return ""
+	}
+	switch verb {
+	case "range_step", "alarm_toggle":
+		if snap.AutoChannel {
+			return verb + " is ignored by firmware while in auto-channel mode; channel_step to a manual channel (CH1–4) first"
+		}
+	}
+	return ""
 }
 
 // EncodeCommand renders a 64-byte OUT report payload for a single named

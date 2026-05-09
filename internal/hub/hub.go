@@ -27,6 +27,10 @@ type Hub struct {
 	allowControl bool
 	logger       *slog.Logger
 	seq          atomic.Uint64
+	// latestSnap is the most recently received valid snapshot. The Run
+	// goroutine stores; readPump goroutines load to gate per-state
+	// verbs (lpmeter.VerbAvailableInState) before queueing a HID write.
+	latestSnap atomic.Pointer[lpmeter.Snapshot]
 }
 
 type client struct {
@@ -116,6 +120,12 @@ func (h *Hub) Run(ctx context.Context) {
 			if !snap.Valid {
 				continue
 			}
+			// Update the gate-state pointer on every valid snap, even
+			// when CloseEnough drops the broadcast. Per-state verb
+			// gating reads this from another goroutine and needs
+			// fresh state regardless of whether we fan out.
+			snapCopy := snap
+			h.latestSnap.Store(&snapCopy)
 			if lastSnap != nil && lastSnap.CloseEnough(snap) {
 				continue
 			}
@@ -243,6 +253,14 @@ func (h *Hub) handleClientMsg(c *client, msg []byte) {
 	case "command":
 		if !h.allowControl {
 			h.sendAck(c, req.ID, false, "control disabled")
+			return
+		}
+		// Reject verbs the firmware will silently ignore in the
+		// current state (e.g. range_step in auto-channel mode), so
+		// the client gets a useful error instead of a misleading
+		// ok:true followed by no observable effect.
+		if reason := lpmeter.VerbAvailableInState(req.Action, h.latestSnap.Load()); reason != "" {
+			h.sendAck(c, req.ID, false, reason)
 			return
 		}
 		val := -1
