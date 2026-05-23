@@ -2,6 +2,7 @@ package lpmeter
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -38,12 +39,14 @@ type Source interface {
 // and arbitrates reads (poll responses) and writes (control commands)
 // so they never collide.
 type HIDOwner struct {
-	vendorID  uint16
-	productID uint16
-	pollEvery time.Duration
-	commands  chan command
-	out       chan<- Snapshot
-	logger    *slog.Logger
+	vendorID    uint16
+	productID   uint16
+	pollEvery   time.Duration
+	commands    chan command
+	out         chan<- Snapshot
+	scopeOut    chan<- ScopeFrame    // nil → scope assembly disabled
+	spectrumOut chan<- SpectrumFrame // nil → spectrum assembly disabled
+	logger      *slog.Logger
 }
 
 type command struct {
@@ -53,15 +56,19 @@ type command struct {
 
 // NewHIDOwner builds an owner that will open an LP-500/700 by VID/PID
 // (when both are non-zero) or by Product-string match ("LP-500" /
-// "LP-700") otherwise. Writes snapshots to `out`.
-func NewHIDOwner(vid, pid uint16, pollEvery time.Duration, out chan<- Snapshot, logger *slog.Logger) *HIDOwner {
+// "LP-700") otherwise. Writes snapshots to `out`; if non-nil, also
+// assembles scope/spectrum buffers when the meter is on the matching
+// LCD page and emits them on `scopeOut` / `spectrumOut`.
+func NewHIDOwner(vid, pid uint16, pollEvery time.Duration, out chan<- Snapshot, scopeOut chan<- ScopeFrame, spectrumOut chan<- SpectrumFrame, logger *slog.Logger) *HIDOwner {
 	return &HIDOwner{
-		vendorID:  vid,
-		productID: pid,
-		pollEvery: pollEvery,
-		commands:  make(chan command, 16),
-		out:       out,
-		logger:    logger,
+		vendorID:    vid,
+		productID:   pid,
+		pollEvery:   pollEvery,
+		commands:    make(chan command, 16),
+		out:         out,
+		scopeOut:    scopeOut,
+		spectrumOut: spectrumOut,
+		logger:      logger,
 	}
 }
 
@@ -151,19 +158,67 @@ func (o *HIDOwner) runOnce(ctx context.Context) error {
 		}
 	}()
 
-	// pollTicker drives both the active poll ('0' command) and the
-	// drain of any queued control verbs from clients. Most ticks send
-	// the live-telemetry poll; one in `statusEveryN` sends cmd '6'
-	// instead, which asks the meter to populate bytes 40..63 of its
-	// next IN report with the current ASCII alert message.
+	// pollTicker drives both the active poll (cmd '0') and the drain
+	// of any queued control verbs from clients. The exact cmd that
+	// fires on each tick depends on the meter's current top_mode:
+	//   - power_swr / setup: cmd '0' every tick, cmd '6' every Nth
+	//     tick (refreshes the ASCII status slot at bytes 40..63)
+	//   - waveform / spectrum: 6-tick cycle '0' '1' '2' '3' '4' '5',
+	//     so each tick cycle yields one telemetry frame plus the 5
+	//     segments that assemble into one ScopeFrame or SpectrumFrame
+	//     (~4 Hz scope/spec rate at the default 40 ms poll cadence,
+	//     ~4 Hz telemetry rate during scope/spec mode)
 	const statusEveryN = 10
+	const sampleCycleLen = 6
 	pollTicker := time.NewTicker(o.pollEvery)
 	defer pollTicker.Stop()
 	tickN := 0
+
 	// Sticky status message: only cmd-'6' responses carry it; carry it
 	// forward across plain cmd-'0' responses so clients see a stable
 	// value rather than text-then-blank flicker.
 	var lastStatus string
+
+	// Track meter state from the last decoded telemetry frame. Used
+	// by the tick handler to decide whether to interleave sample cmds,
+	// and by the sample-frame emitter to label the assembled buffer.
+	var lastTopMode string
+	var lastChannel int
+	var lastAutoCh bool
+
+	// Frame routing is by SHAPE, not by OUT-write order. An earlier
+	// implementation matched IN frames to OUT cmds via a FIFO, but
+	// that approach desyncs on any single missed event (stale kernel-
+	// buffered frame at HID open, an unsolicited firmware frame on
+	// mode change) and the misalignment then cascades. With shape-
+	// based routing the loop is self-correcting: each frame is
+	// classified on its own merits and no per-write state persists
+	// across frames.
+	//
+	// Three frame classes:
+	//   1. ECHO     — byte[0] in cmd-char range AND bytes 1..63 zero.
+	//                 Firmware refused the OUT (wrong LCD page or no-op
+	//                 in current state). Drop.
+	//   2. TELEMETRY — non-echo, AND satisfies tight byte-range
+	//                  invariants (byte 3 ≤ 3, byte 4 ≤ 4, etc.).
+	//                  Probability a sample frame accidentally passes
+	//                  all five invariants ≈ 10⁻¹⁰. Run through Decode.
+	//   3. SAMPLE   — non-echo, fails telemetry invariants. In
+	//                  waveform/spectrum mode this is the next segment
+	//                  of the 5×64-byte buffer; assemble in arrival
+	//                  order (the 1:1 firmware response keeps order
+	//                  aligned with our 6-tick cycle).
+
+	// Scope / spectrum buffer assembly state. sampleSegIdx advances
+	// with each non-telemetry, non-echo frame received while in a
+	// sample-bearing mode; it resets to 0 on every telemetry frame
+	// (start of a fresh 6-tick cycle) and on every mode change.
+	var scopeBuf [SampleBufferSize]byte
+	var spectrumBuf [SampleBufferSize]byte
+	sampleSegIdx := 0
+	resetSampleState := func() {
+		sampleSegIdx = 0
+	}
 
 	for {
 		select {
@@ -172,55 +227,121 @@ func (o *HIDOwner) runOnce(ctx context.Context) error {
 		case err := <-readErr:
 			return fmt.Errorf("hid read: %w", err)
 		case frame := <-frames:
-			snap, err := Decode(frame)
-			if err != nil {
-				if IsSkippable(err) {
-					continue
-				}
-				o.logger.Debug("decode error", "err", err, "raw", fmt.Sprintf("%x", frame))
+			// Echo frame? Firmware refused the OUT. Drop & reset any
+			// in-progress sample buffer.
+			if isCommandEcho(frame) {
+				o.logger.Debug("cmd echo (firmware refused)", "cmd", string(frame[0]), "top_mode", lastTopMode)
+				resetSampleState()
 				continue
 			}
-			// Bytes 40..63 only carry an ASCII status message after a
-			// cmd '6' poll. After cmd '0' that slot holds binary
-			// scope/spec data and Decode returns "". Carry the last
-			// non-empty message forward so it stays visible to clients
-			// between cmd-'6' refreshes.
-			if snap.StatusMessage == "" {
-				snap.StatusMessage = lastStatus
-			} else {
-				lastStatus = snap.StatusMessage
+			// Telemetry-shaped? Tight byte-range invariants (~10⁻¹⁰
+			// false-positive rate on random sample data). Decode and
+			// broadcast.
+			if isLikelyTelemetry(frame) {
+				snap, err := Decode(frame)
+				if err != nil {
+					if IsSkippable(err) {
+						continue
+					}
+					o.logger.Debug("decode error", "err", err, "raw", fmt.Sprintf("%x", frame))
+					continue
+				}
+				// Bytes 40..63 only carry an ASCII status message after
+				// cmd '6'. After cmd '0' that slot holds bargraph /
+				// pwr-mult bytes and extractStatusMessage returns "".
+				// Carry the last non-empty message forward across plain
+				// telemetry frames so clients see stable text.
+				if snap.StatusMessage == "" {
+					snap.StatusMessage = lastStatus
+				} else {
+					lastStatus = snap.StatusMessage
+				}
+				// A telemetry frame marks the start of a fresh 6-tick
+				// cycle. Reset the sample-segment counter so the next
+				// 5 non-telemetry frames assemble seg 1..5 in order.
+				sampleSegIdx = 0
+				// Top-mode change invalidates any in-progress assembly.
+				if snap.TopMode != lastTopMode {
+					resetSampleState()
+				}
+				lastTopMode = snap.TopMode
+				lastChannel = snap.Channel
+				lastAutoCh = snap.AutoChannel
+				o.logger.Debug("frame",
+					"channel", snap.Channel,
+					"auto_channel", snap.AutoChannel,
+					"power_avg_w", snap.PowerAvgW,
+					"power_peak_w", snap.PowerPeakW,
+					"peak_hold_w", snap.PeakHoldW,
+					"peak_mode", snap.PeakMode,
+					"swr", snap.SWR,
+					"range", snap.Range,
+					"alarm_enabled", snap.AlarmEnabled,
+					"status", snap.StatusMessage,
+					"raw", fmt.Sprintf("%x", frame))
+				select {
+				case o.out <- snap:
+				case <-ctx.Done():
+					return nil
+				default:
+					// Hub is slow; drop this sample. Next IN report
+					// will replace it.
+				}
+				continue
 			}
-			// Full-frame hex in the debug log lets us see whether the
-			// firmware interleaves multiple IN-report types (e.g. Power/
-			// SWR vs status), which we'd otherwise conflate. Cheap on a
-			// quiet journal because the level defaults to error.
-			o.logger.Debug("frame",
-				"channel", snap.Channel,
-				"auto_channel", snap.AutoChannel,
-				"power_avg_w", snap.PowerAvgW,
-				"power_peak_w", snap.PowerPeakW,
-				"peak_hold_w", snap.PeakHoldW,
-				"peak_mode", snap.PeakMode,
-				"swr", snap.SWR,
-				"range", snap.Range,
-				"alarm_enabled", snap.AlarmEnabled,
-				"status", snap.StatusMessage,
-				"raw", fmt.Sprintf("%x", frame))
-			select {
-			case o.out <- snap:
-			case <-ctx.Done():
-				return nil
-			default:
-				// Hub is slow; drop this sample. Next IN report will replace it.
+			// Sample frame. Route into the appropriate buffer based
+			// on the last-known top_mode. The firmware delivers
+			// segments 1..5 in cmd-order, 1:1 with our writes, so
+			// arrival order matches segment index — no need to know
+			// the originating cmd byte.
+			if lastTopMode != "waveform" && lastTopMode != "spectrum" {
+				// Not on a sample-bearing page; drop (likely a stale
+				// frame from a recent mode transition).
+				continue
+			}
+			if sampleSegIdx >= 5 {
+				// More sample frames than the cycle should produce;
+				// drop. Will realign on the next telemetry frame.
+				o.logger.Debug("extra sample frame past seg 5", "top_mode", lastTopMode)
+				continue
+			}
+			segIdx := sampleSegIdx
+			sampleSegIdx++
+			switch lastTopMode {
+			case "waveform":
+				copy(scopeBuf[segIdx*64:(segIdx+1)*64], frame)
+				o.logger.Debug("scope segment received", "seg", segIdx+1)
+				if sampleSegIdx == 5 {
+					o.emitScope(scopeBuf[:], lastChannel, lastAutoCh, ctx)
+				}
+			case "spectrum":
+				copy(spectrumBuf[segIdx*64:(segIdx+1)*64], frame)
+				o.logger.Debug("spectrum segment received", "seg", segIdx+1)
+				if sampleSegIdx == 5 {
+					o.emitSpectrum(spectrumBuf[:], lastChannel, lastAutoCh, ctx)
+				}
 			}
 		case <-pollTicker.C:
 			if err := o.drainCommands(dev); err != nil {
 				return err
 			}
 			tickN++
-			payload := PollReport()
-			if tickN%statusEveryN == 0 {
-				payload = StatusReport()
+			var payload []byte
+			switch lastTopMode {
+			case "waveform", "spectrum":
+				// 6-tick cycle: phase 0 = telemetry poll, 1..5 = sample segments.
+				phase := tickN % sampleCycleLen
+				if phase == 0 {
+					payload = PollReport()
+				} else {
+					payload = SampleReport(byte(phase))
+				}
+			default:
+				if tickN%statusEveryN == 0 {
+					payload = StatusReport()
+				} else {
+					payload = PollReport()
+				}
 			}
 			if err := writeReport(dev, payload); err != nil {
 				return fmt.Errorf("poll: %w", err)
@@ -300,4 +421,163 @@ func minInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// isCommandEcho reports whether a 64-byte IN frame is the firmware's
+// echo of an OUT command write (byte[0] in the cmd-char range '0'..'?'
+// and every other byte zero). Real telemetry never matches.
+func isCommandEcho(frame []byte) bool {
+	if len(frame) == 0 || frame[0] < '0' || frame[0] > '?' {
+		return false
+	}
+	for i := 1; i < len(frame); i++ {
+		if frame[i] != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// isLikelyTelemetry reports whether a 64-byte IN frame's structure
+// matches a real telemetry response from cmd '0' or '6': specifically
+// that the header-byte ranges that the Decode function later relies on
+// are all within their valid intervals. Sample frames (from cmds
+// '1'..'5' in waveform/spectrum mode) place arbitrary 8-bit sample
+// data at these offsets, so the chance of all five passing on a sample
+// frame is the product of each range's relative width — under 10⁻¹⁰
+// for random data, slightly higher in pathological correlated cases
+// but never observed empirically on the LP-700 firmware.
+//
+// This is the key defense against sample frames leaking into the
+// telemetry decode path. It is intentionally STRICTER than what
+// Decode itself enforces, because Decode would also accept some
+// sample frames (those that happen to have all 5 header bytes in
+// range with garbage payload values) and broadcast garbage Snapshots.
+func isLikelyTelemetry(frame []byte) bool {
+	if len(frame) != ReportSize {
+		return false
+	}
+	if frame[OffsetTopMode] > 3 {
+		return false
+	}
+	if frame[OffsetChannel] > 4 {
+		return false
+	}
+	if frame[OffsetChannelAuto] > 4 {
+		return false
+	}
+	if int(frame[OffsetRange]) >= len(rangeNames) {
+		return false
+	}
+	// Byte 7 is alarm-DISABLED, a flag byte: 0 or 1 only.
+	if frame[OffsetAlarm] > 1 {
+		return false
+	}
+	if int(frame[OffsetPeakAvg]) >= len(peakModeNames) {
+		return false
+	}
+	// Power coherence: in real telemetry frames the firmware
+	// guarantees peak_power >= avg_power (peak is a max-hold over a
+	// short window, avg is a rolling integration over the same or
+	// longer window). Sample frames place arbitrary u8 sample values
+	// at these offsets and routinely violate this invariant — the
+	// remaining "peak < avg" leakage past the byte-range checks falls
+	// into this filter.
+	rawPeak := binary.BigEndian.Uint16(frame[OffsetPeakPwrHi : OffsetPeakPwrHi+2])
+	rawAvg := binary.BigEndian.Uint16(frame[OffsetAvgPwrHi : OffsetAvgPwrHi+2])
+	if rawPeak < rawAvg {
+		return false
+	}
+	// SWR sanity: raw SWR is a 16-bit fixed-point /100 value. The
+	// meter caps physically meaningful SWR around 5.0 (raw 500); the
+	// internal floor is 1.0 (raw 100). Values above raw ~1000 (SWR
+	// 10) are unphysical for any real coupler/load and indicate
+	// sample data has slipped into bytes 2 / 37. Cap at raw 1000 to
+	// catch the residual leak.
+	rawSWR := uint16(frame[OffsetSWRHi])<<8 | uint16(frame[OffsetSWRLo])
+	if rawSWR > 1000 {
+		return false
+	}
+	return true
+}
+
+// emitScope copies `buf` into a fresh ScopeFrame and sends it on the
+// scope channel non-blocking. If the channel is nil (assembly
+// disabled) or full (slow consumer), the frame is dropped — a fresh
+// one will be assembled on the next 6-tick cycle.
+func (o *HIDOwner) emitScope(buf []byte, channel int, autoCh bool, ctx context.Context) {
+	if o.scopeOut == nil {
+		return
+	}
+	// Hardware-invalid guard: the LP-500/700 firmware doesn't support
+	// auto-channel on the waveform / spectrum LCD pages. Sample
+	// buffers captured in that state are indeterminate, so don't
+	// broadcast them — the client would render garbage. Operators
+	// must channel_step to a manual channel (CH1..4) before the
+	// scope/spectrum view becomes meaningful.
+	if autoCh || channel < 1 || channel > 4 {
+		o.logger.Debug("scope frame suppressed (invalid channel/auto state)", "channel", channel, "auto_channel", autoCh)
+		return
+	}
+	samples := make(SampleBytes, len(buf))
+	copy(samples, buf)
+	frame := ScopeFrame{
+		Timestamp:   time.Now().UTC(),
+		TopMode:     "waveform",
+		Channel:     channel,
+		AutoChannel: autoCh,
+		Samples:     samples,
+	}
+	select {
+	case o.scopeOut <- frame:
+		o.logger.Debug("emit scope", "channel", channel, "samples_min_max", minMax(samples))
+	case <-ctx.Done():
+	default:
+		o.logger.Debug("scope buffer dropped (hub slow)")
+	}
+}
+
+// emitSpectrum is the spectrum-buffer equivalent of emitScope.
+func (o *HIDOwner) emitSpectrum(buf []byte, channel int, autoCh bool, ctx context.Context) {
+	if o.spectrumOut == nil {
+		return
+	}
+	if autoCh || channel < 1 || channel > 4 {
+		o.logger.Debug("spectrum frame suppressed (invalid channel/auto state)", "channel", channel, "auto_channel", autoCh)
+		return
+	}
+	bins := make(SampleBytes, len(buf))
+	copy(bins, buf)
+	frame := SpectrumFrame{
+		Timestamp:   time.Now().UTC(),
+		TopMode:     "spectrum",
+		Channel:     channel,
+		AutoChannel: autoCh,
+		Bins:        bins,
+	}
+	select {
+	case o.spectrumOut <- frame:
+		o.logger.Debug("emit spectrum", "channel", channel, "bins_min_max", minMax(bins))
+	case <-ctx.Done():
+	default:
+		o.logger.Debug("spectrum buffer dropped (hub slow)")
+	}
+}
+
+// minMax is a tiny diagnostic helper for the emit-debug log: returns a
+// "min..max" string summarising a sample buffer.
+func minMax(b SampleBytes) string {
+	if len(b) == 0 {
+		return "(empty)"
+	}
+	mn, mx := b[0], b[0]
+	for _, v := range b {
+		if v < mn {
+			mn = v
+		}
+		if v > mx {
+			mx = v
+		}
+	}
+	return fmt.Sprintf("%d..%d", mn, mx)
 }

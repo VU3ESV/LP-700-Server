@@ -1,6 +1,7 @@
 package lpmeter
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -102,11 +103,29 @@ func PollReport() []byte {
 // bytes 40..63 of the next telemetry frame with its current ASCII alert
 // message ("Reduce power or lower range" etc.). Per the LP700.pcapng
 // analysis the Telepost VM cycles through cmd '0' (live telemetry) and
-// cmd '6' (status text) along with `1`..`5` (scope/spec sample buffers
-// that v1 ignores).
+// cmd '6' (status text) along with `1`..`5` (scope/spec sample buffers).
 func StatusReport() []byte {
 	out := make([]byte, ReportSize)
 	out[0] = '6'
+	return out
+}
+
+// SampleReport returns the OUT payload that asks the meter to deliver
+// scope/spectrum buffer segment `seg` (1..5). The next IN report has
+// the firmware-populated 64-byte segment payload (the WHOLE 64 bytes,
+// not just bytes 40..63 — confirmed empirically 2026-05-15). Segments
+// 1..5 concatenate in order to produce a single SampleBufferSize-byte
+// buffer.
+//
+// Firmware ignores these cmds and returns an echo frame when the meter
+// is NOT on the corresponding LCD page (waveform for envelope samples,
+// spectrum for FFT bins). Power_SWR and Setup pages → echo only.
+func SampleReport(seg byte) []byte {
+	if seg < 1 || seg > 5 {
+		panic(fmt.Sprintf("sample segment %d out of range 1..5", seg))
+	}
+	out := make([]byte, ReportSize)
+	out[0] = '0' + seg // '1' .. '5'
 	return out
 }
 
@@ -217,28 +236,21 @@ func Decode(report []byte) (Snapshot, error) {
 	return s, nil
 }
 
-// extractStatusMessage returns the trimmed ASCII message embedded in the
-// secondary slot of a telemetry frame, or "" if the slot doesn't look
-// like text (which is the common case — the slot also carries scope/spec
-// sample data after cmd '0'..'5').
+// extractStatusMessage returns the trimmed ASCII message embedded in
+// the secondary slot of a telemetry frame, or "" if the slot doesn't
+// look like a real English status phrase ("Reduce power or lower
+// range", "TX Match req'd", etc.).
+//
+// The earlier "≥75% printable" filter was too loose: sample buffer
+// bytes that happen to lie in the printable-ASCII range (e.g. 32..126)
+// would slip through as ?-prefixed alphabetised garbage like
+// `?BFILORUY|_bfilorvy|`. Status messages from the LP-700 firmware
+// are real English phrases, so require BOTH:
+//
+//   - at least one ASCII space (status phrases are multi-word), AND
+//   - at least one run of 3+ consecutive ASCII letters (a..z / A..Z)
 func extractStatusMessage(slot []byte) string {
-	// The slot is text-ish when most of its non-zero bytes are printable
-	// ASCII. Scope/spec samples typically carry tiny binary values
-	// (0..3) which fail this filter.
-	printable, nonzero := 0, 0
-	for _, b := range slot {
-		if b == 0 {
-			continue
-		}
-		nonzero++
-		if b >= 0x20 && b < 0x7f {
-			printable++
-		}
-	}
-	if nonzero < 4 || printable*4 < nonzero*3 {
-		// Less than ~75% printable, or very sparse — not a message.
-		return ""
-	}
+	// First pass: shape check. Sample data fails both criteria.
 	out := make([]byte, 0, len(slot))
 	for _, b := range slot {
 		if b == 0 {
@@ -251,6 +263,30 @@ func extractStatusMessage(slot []byte) string {
 	// Trim trailing whitespace.
 	for len(out) > 0 && out[len(out)-1] == ' ' {
 		out = out[:len(out)-1]
+	}
+	if len(out) < 4 {
+		return ""
+	}
+	if !bytes.ContainsRune(out, ' ') {
+		return ""
+	}
+	// 3+ consecutive ASCII letters.
+	run := 0
+	hasRun := false
+	for _, b := range out {
+		isLetter := (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z')
+		if isLetter {
+			run++
+			if run >= 3 {
+				hasRun = true
+				break
+			}
+		} else {
+			run = 0
+		}
+	}
+	if !hasRun {
+		return ""
 	}
 	return string(out)
 }
