@@ -110,16 +110,26 @@ sample data (NOT just bytes 40..63 — that "secondary slot" model only
 applies to telemetry frames). See "Scope and spectrum sample buffers"
 below.
 
-**Firmware quirk — per-channel verbs in auto-channel mode:** `range_step`
-(F3) and `alarm_toggle` (F4) are per-channel settings. When the meter is
-in auto-channel mode (IN byte 4 == 0), the firmware silently ignores
-these presses — there is no single "current channel" to mutate. The hub
-intercepts these in `lpmeter.VerbAvailableInState` and NACKs with a
-reason instead of writing a guaranteed-no-op OUT report; clients should
-prompt the user to `channel_step` to a manual channel (CH1–4) first.
-Confirmed empirically on 2026-05-09 by sending each verb 5× in auto-ch
-mode and observing no change to offsets 6 / 7. `mode_step`, `channel_step`,
-`peak_toggle`, `setup`, `freeze` all work in auto-ch.
+**Per-channel verbs in auto-channel mode (NOT a firmware quirk —
+correcting an earlier misdiagnosis):** `range_step` (F3) and
+`alarm_toggle` (F4) are per-channel settings. Each of CH1..CH4
+remembers its own range and alarm-enabled state. In auto-channel
+mode, F3/F4 on the meter's front panel mutate the **auto-locked
+channel's** setting — i.e. whichever channel auto-detection
+currently has the signal locked to.
+
+An earlier probe (2026-05-09) sent 6 `range_step` writes in auto-
+channel and saw the *displayed* range stay at 2.5K, which was read
+as "F3 is a no-op in auto-channel mode" and a server-side NACK
+was added. That observation was misleading: each press DID step
+the auto-locked channel's range, but auto-channel kept re-locking
+to a different channel between presses, and the displayed range
+is always whichever channel is currently locked. Confirmed wrong
+on the bench 2026-05-16 by VU2CPL — pressing F3 on the meter in
+pwr/swr + auto-channel does visibly cycle the range.
+
+The NACK has been removed; `VerbAvailableInState` is kept as a
+hook in case a real per-state firmware quirk surfaces later.
 
 ### IN-report decode
 
