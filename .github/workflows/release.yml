@@ -59,7 +59,10 @@ jobs:
       - name: Build binaries
         env:
           CGO_ENABLED: '0'
-          LDFLAGS: '-s -w'
+          # -X main.version stamps the release tag into the binary; the
+          # update check (internal/update) compares it with the latest
+          # GitHub release. Unstamped builds report "dev" and never check.
+          LDFLAGS: '-s -w -X main.version=${{ steps.ver.outputs.version }}'
         run: |
           set -euo pipefail
           mkdir -p dist

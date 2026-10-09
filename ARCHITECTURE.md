@@ -78,6 +78,13 @@ Three goroutines, one snapshot:
    current snapshot immediately, then streams events. Inbound control
    messages are validated and forwarded to the HID owner's queue.
 
+Off to the side, a fourth goroutine — the **update check**
+(`internal/update`) — asks GitHub's `releases/latest` for
+VU3ESV/LP-700-Server a minute after start and at most once per 24 h after
+a successful answer. It has its own `http.Client`, shares nothing with
+the three above, and only publishes a cached result at `GET /api/update`
+plus one log line per newer release. Never downloads anything.
+
 ## 4. WebSocket wire protocol
 
 JSON text frames; `type` discriminates message kinds. Server→client
@@ -168,8 +175,8 @@ breaking client code.
 ## 5. Configuration
 
 Single TOML file; `-config <path>` overrides the default
-`/etc/lp700-server/config.toml`. CLI flags: `-backend hid|simulator|auto`
-and `-v` (start at debug log level).
+`/etc/lp700-server/config.toml`. CLI flags: `-backend hid|simulator|auto`,
+`-v` (start at debug log level) and `-version` (print and exit).
 
 ```toml
 [meter]
@@ -186,6 +193,9 @@ allow_control = true           # set false for a read-only port
 
 [ui]
 title = "LP-500 / LP-700"
+
+[updates]
+check = true                   # GitHub new-release check; false = off
 ```
 
 Default log level is **error** so the systemd journal stays quiet on a
@@ -208,7 +218,10 @@ the meter's **Power/SWR** screen:
 - **Connection state** pill driven by heartbeat + `status` frames
 - **Backend** indicator (HID vs SIMULATOR) — obvious when looking at
   synthesised data
-- **Setup overlay** — runtime log-level picker
+- **Setup overlay** — runtime log-level picker; shows the server version
+- **Update notice** — a one-line *"LP-700-Server vX is available —
+  release notes"* bar under the header, from `GET /api/update`, when the
+  server's release check has found a newer release
 
 ## 7. Failure modes
 
@@ -235,7 +248,10 @@ vet + race tests + build on every push. Tagged releases
 (`v*.*.*`) trigger `release.yml`, which cross-compiles all six targets
 (linux amd64/arm64/armv7, darwin amd64/arm64, windows amd64) on a
 single `ubuntu-latest` runner and publishes a GitHub Release with
-SHA256SUMS.
+SHA256SUMS. Both the release workflow and `build-pi.sh` stamp the
+version with `-ldflags "-X main.version=…"` (the tag, or
+`git describe --tags`); an unstamped build reports `dev` and never runs
+the automatic update check.
 
 ## 9. Pi deployment
 

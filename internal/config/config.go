@@ -10,9 +10,10 @@ import (
 )
 
 type Config struct {
-	Meter  Meter  `toml:"meter"`
-	Server Server `toml:"server"`
-	UI     UI     `toml:"ui"`
+	Meter   Meter   `toml:"meter"`
+	Server  Server  `toml:"server"`
+	UI      UI      `toml:"ui"`
+	Updates Updates `toml:"updates"`
 }
 
 type Meter struct {
@@ -36,6 +37,13 @@ type UI struct {
 	Title string `toml:"title"`
 }
 
+// Updates controls the GitHub release check (internal/update): one
+// anonymous request to api.github.com about a minute after start and at
+// most once a day after that. It never downloads or installs anything.
+type Updates struct {
+	Check bool `toml:"check"`
+}
+
 func defaults() Config {
 	return Config{
 		Meter: Meter{
@@ -56,6 +64,9 @@ func defaults() Config {
 		},
 		UI: UI{
 			Title: "LP-500 / LP-700",
+		},
+		Updates: Updates{
+			Check: true,
 		},
 	}
 }

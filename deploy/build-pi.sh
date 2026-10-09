@@ -17,7 +17,12 @@ mkdir -p dist
 go mod tidy
 
 ARCH="${ARCH:-arm64}"
-LDFLAGS="-s -w"
+# Stamp the version the update check compares (internal/update): the
+# release tag at a tagged commit, e.g. v0.2.1-3-g92ace11 after it. Without
+# git or tags the binary stays "dev" and never checks on its own.
+# VERSION=vX.Y.Z overrides.
+VERSION="${VERSION:-$(git describe --tags --dirty 2>/dev/null || echo dev)}"
+LDFLAGS="-s -w -X main.version=$VERSION"
 export CGO_ENABLED=0
 
 case "$ARCH" in
@@ -37,6 +42,6 @@ case "$ARCH" in
     ;;
 esac
 
-echo "Built: $OUT"
+echo "Built: $OUT ($VERSION)"
 ls -lh "$OUT"
 file "$OUT" 2>/dev/null || true

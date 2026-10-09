@@ -76,7 +76,8 @@ meter uses different IDs, edit `/etc/udev/rules.d/99-lp700.rules` and run
   triggered by pushing a `v*.*.*` tag. Cross-compiles
   `linux/{amd64,arm64,armv7}` + `darwin/{amd64,arm64}` + `windows/amd64`,
   attaches `SHA256SUMS`, auto-generates release notes from the previous
-  tag's commits.
+  tag's commits. The tag is stamped into each binary
+  (`-ldflags "-X main.version=<tag>"`); `lp700-server -version` prints it.
 
 ```sh
 git tag v0.1.0 && git push origin v0.1.0
@@ -96,6 +97,7 @@ git tag v0.1.0 && git push origin v0.1.0
 | `server.allow_control`    | `true`           | Set `false` for a read-only port                                   |
 | `server.max_clients`      | `32`             |                                                                    |
 | `server.heartbeat_ms`     | `2000`           |                                                                    |
+| `updates.check`           | `true`           | GitHub new-release check — see [Updates](#updates)                 |
 
 After editing: `sudo systemctl restart lp700-server`.
 
@@ -110,6 +112,37 @@ Defaults to **error** so the journal stays quiet. Two ways to turn it up:
   curl -s http://host:8089/api/log-level
   curl -s -XPOST http://host:8089/api/log-level -d '{"level":"debug"}'
   ```
+
+## Updates
+
+The server tells you when a newer LP-700-Server release is out. About a
+minute after start, and then at most once a day while it runs, it makes
+one anonymous request to GitHub —
+`GET https://api.github.com/repos/VU3ESV/LP-700-Server/releases/latest` —
+and compares the release tag with its own version. A newer release is:
+
+- shown as a notice at the top of the web UI —
+  *"LP-700-Server vX.Y.Z is available (running …) — release notes"*;
+- logged once per release (`journalctl -u lp700-server`), whatever the
+  log level is set to;
+- reported by `GET /api/update` (read-only JSON:
+  `{enabled, automatic, current, update_available, latest, html_url, checked_at}`).
+
+Nothing is downloaded or installed — update the usual way (release
+binary, or `deploy/redeploy.sh`). The check runs on its own goroutine and
+never touches the meter or the WebSocket clients. If GitHub can't be
+reached it stays silent and tries again an hour later; the 24 h clock only
+starts after a successful answer. Nothing is written to disk, so a
+restart checks once more about a minute after start.
+
+- **Turn it off:** `[updates] check = false` in `config.toml`, then
+  restart the service.
+- **Development builds** (a plain `go build` / `go run`, version `dev`)
+  never check. `deploy/build-pi.sh` stamps `git describe --tags`, and the
+  release workflow stamps the tag.
+- **See the notice against the real latest release:** run with
+  `LP700_SERVER_UPDATE_TEST_VERSION=0.0.1` set (ignored unless set); the
+  first check comes a minute after start.
 
 ## Diagnostic subcommands
 
@@ -138,6 +171,7 @@ or WireGuard and bind the listen address to the VPN interface (or
 | `/healthz`       | `ok\n` — for systemd / monitoring probes                                                 |
 | `/api/config`    | `{backend, allow_control, title}` — UI bootstrap                                         |
 | `/api/log-level` | GET / POST the running slog level (`error`/`warn`/`info`/`debug`)                        |
+| `/api/update`    | GET — cached result of the GitHub release check (see [Updates](#updates))                |
 
 Smoke test from the command line:
 
@@ -191,6 +225,7 @@ curl -s -XPOST http://localhost:8089/api/log-level -d '{"level":"debug"}'
 │   ├── config/                   # TOML loader + defaults
 │   ├── lpmeter/                  # HID owner, decoder, snapshot, simulator, probe
 │   ├── hub/                      # WebSocket fan-out / fan-in / heartbeats
+│   ├── update/                   # GitHub new-release check + /api/update
 │   └── web/static/index.html     # reference web client (go:embed)
 ├── deploy/
 │   ├── config.example.toml

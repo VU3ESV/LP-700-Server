@@ -36,3 +36,12 @@ allow_control = true
 
 [ui]
 title = "LP-500 / LP-700"
+
+[updates]
+# About a minute after start, and then at most once a day, ask GitHub
+# (one anonymous request to api.github.com) whether a newer LP-700-Server
+# release is published. A newer one is logged once and shown as a notice
+# in the web UI (also GET /api/update). Nothing is downloaded or
+# installed. Development builds (version "dev") never check.
+# Set to false to turn the check off.
+check = true
