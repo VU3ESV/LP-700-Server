@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"reflect"
 	"strings"
 	"sync"
@@ -17,17 +18,31 @@ import (
 
 var t0 = time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
 
-func TestVersionComponents(t *testing.T) {
-	cases := map[string][]int{
-		"v1.10.2-rc3": {1, 10, 2, 3},
-		" v0.2.1 ":    {0, 2, 1},
-		"V3":          {3},
-		"dev":         nil,
-		"":            nil,
+// The test hook must not leak in from the developer's shell: it would
+// replace every version under test.
+func TestMain(m *testing.M) {
+	os.Unsetenv(TestVersionEnv)
+	os.Exit(m.Run())
+}
+
+func TestParseVersion(t *testing.T) {
+	cases := map[string]Version{
+		"v1.10.2":                 {Core: []int{1, 10, 2}},
+		" v0.2.1 ":                {Core: []int{0, 2, 1}},
+		"V3":                      {Core: []int{3}},
+		"v1.0.0-rc.1":             {Core: []int{1, 0, 0}, Pre: []string{"rc", "1"}},
+		"v0.2.1-3-g92ace11":       {Core: []int{0, 2, 1}, Ahead: 3},
+		"v0.2.1-3-g92ace11-dirty": {Core: []int{0, 2, 1}, Ahead: 3},
+		"v0.2.1-dirty":            {Core: []int{0, 2, 1}},
+		"v1.0.0-rc.1-3-g92ace11":  {Core: []int{1, 0, 0}, Pre: []string{"rc", "1"}, Ahead: 3},
+		"dev":                     {},
+		"test-1-gabc1234":         {},
+		"1.2.x":                   {},
+		"":                        {},
 	}
 	for in, want := range cases {
-		if got := VersionComponents(in); !reflect.DeepEqual(got, want) {
-			t.Errorf("VersionComponents(%q) = %v, want %v", in, got, want)
+		if got := ParseVersion(in); !reflect.DeepEqual(got, want) {
+			t.Errorf("ParseVersion(%q) = %+v, want %+v", in, got, want)
 		}
 	}
 }
@@ -48,6 +63,21 @@ func TestIsNewer(t *testing.T) {
 		// A build stamped by `git describe` after a tag sits above that tag.
 		{"v0.2.1", "v0.2.1-3-g92ace11", false},
 		{"v0.2.2", "v0.2.1-3-g92ace11", true},
+		{"v0.2.1-4-gabc1234", "v0.2.1-3-g92ace11", true},
+		{"v0.2.1", "v0.2.1-dirty", false},
+		// A pre-release sits below its release and above the one before.
+		{"v1.0.0", "v1.0.0-rc.1", true},
+		{"v1.0.0-rc.1", "v1.0.0", false},
+		{"v1.0.0-rc.1", "v0.9.9", true},
+		{"v1.0.0-rc.2", "v1.0.0-rc.1", true},
+		{"v1.0.0-rc.10", "v1.0.0-rc.9", true}, // numeric identifiers by value
+		{"v1.0.0-rc.1", "v1.0.0-beta", true},  // alphanumeric ones by ASCII
+		{"v1.0.0-rc.1", "v1.0.0-rc", true},    // more identifiers win a tie
+		{"v1.0.0", "v1.0.0-rc.1-3-g92ace11", true},
+		// Nothing without a numeric core is older, or newer, than anything.
+		{"v0.2.1", "test-1-gabc1234", false},
+		{"v0.2.1", "dev", false},
+		{"latest", "v0.2.1", false},
 	}
 	for _, c := range cases {
 		if got := IsNewer(c.candidate, c.current); got != c.want {
@@ -71,22 +101,20 @@ func TestShouldCheck(t *testing.T) {
 	never := time.Time{}
 	cases := []struct {
 		name                     string
-		enabled                  bool
 		lastSuccess, lastFailure time.Time
 		want                     bool
 	}{
-		{"never checked", true, never, never, true},
-		{"setting off", false, never, never, false},
-		{"23 h after a success", true, t0.Add(-23 * time.Hour), never, false},
-		{"24 h after a success", true, t0.Add(-24 * time.Hour), never, true},
-		{"success time in the future", true, t0.Add(time.Hour), never, true},
-		{"30 min after a failure", true, never, t0.Add(-30 * time.Minute), false},
-		{"1 h after a failure", true, never, t0.Add(-time.Hour), true},
-		{"failure time in the future", true, never, t0.Add(time.Hour), true},
-		{"due by success, held by failure", true, t0.Add(-25 * time.Hour), t0.Add(-10 * time.Minute), false},
+		{"never checked", never, never, true},
+		{"23 h after a success", t0.Add(-23 * time.Hour), never, false},
+		{"24 h after a success", t0.Add(-24 * time.Hour), never, true},
+		{"success time in the future", t0.Add(time.Hour), never, true},
+		{"30 min after a failure", never, t0.Add(-30 * time.Minute), false},
+		{"1 h after a failure", never, t0.Add(-time.Hour), true},
+		{"failure time in the future", never, t0.Add(time.Hour), true},
+		{"due by success, held by failure", t0.Add(-25 * time.Hour), t0.Add(-10 * time.Minute), false},
 	}
 	for _, c := range cases {
-		if got := ShouldCheck(c.enabled, c.lastSuccess, c.lastFailure, t0); got != c.want {
+		if got := ShouldCheck(c.lastSuccess, c.lastFailure, t0); got != c.want {
 			t.Errorf("%s: ShouldCheck = %v, want %v", c.name, got, c.want)
 		}
 	}
@@ -134,25 +162,31 @@ func TestReleasePageStaysOnThisRepo(t *testing.T) {
 		t.Errorf("releasePage(%q) = %q", good, got)
 	}
 	for _, bad := range []string{"", "https://example.com/x", "javascript:alert(1)",
-		"https://github.com/someone-else/LP-700-Server/releases/tag/v9"} {
+		"https://github.com/someone-else/LP-700-Server/releases/tag/v9",
+		"https://github.com/VU3ESV/LP-700-Server/releases/../../evil/repo",
+		"https://github.com/VU3ESV/LP-700-Server/releases/tag/../../../evil",
+		"http://github.com/VU3ESV/LP-700-Server/releases/tag/v9",
+		"https://user@github.com/VU3ESV/LP-700-Server/releases/tag/v9",
+		"https://github.com@evil.example/VU3ESV/LP-700-Server/releases/tag/v9"} {
 		if got := releasePage(bad); got != releasesURL {
 			t.Errorf("releasePage(%q) = %q, want %q", bad, got, releasesURL)
 		}
 	}
 }
 
-// checker builds a Checker around a fake fetch and a fixed clock.
+// checker builds a Checker around a fake fetch and a fixed clock. Its
+// log output (info and above) is returned for inspection.
 func checker(t *testing.T, version string, fetch func(ctx context.Context) (Release, error)) (*Checker, *bytes.Buffer) {
 	t.Helper()
-	var notices bytes.Buffer
+	var logs bytes.Buffer
 	c := New(Options{
 		Enabled: true,
 		Version: version,
-		Notice:  slog.New(slog.NewTextHandler(&notices, nil)),
+		Logger:  slog.New(slog.NewTextHandler(&logs, nil)),
 		fetch:   fetch,
 		now:     func() time.Time { return t0 },
 	})
-	return c, &notices
+	return c, &logs
 }
 
 func TestOnlySuccessRecordsTheCheckTime(t *testing.T) {
@@ -165,7 +199,7 @@ func TestOnlySuccessRecordsTheCheckTime(t *testing.T) {
 	if !c.lastSuccess.IsZero() || !c.lastFailure.Equal(t0) {
 		t.Fatalf("after a failure: lastSuccess=%v lastFailure=%v", c.lastSuccess, c.lastFailure)
 	}
-	if ShouldCheck(true, c.lastSuccess, c.lastFailure, t0.Add(30*time.Minute)) {
+	if ShouldCheck(c.lastSuccess, c.lastFailure, t0.Add(30*time.Minute)) {
 		t.Fatal("checked again inside the 1 h back-off")
 	}
 
@@ -216,11 +250,23 @@ func TestNewerReleaseLoggedOncePerTag(t *testing.T) {
 	}
 }
 
+// The notice line must get past a logger filtered at error level when
+// main hands over a level above it.
+func TestNoticeLevelPassesTheRuntimeFilter(t *testing.T) {
+	var out bytes.Buffer
+	quiet := slog.New(slog.NewTextHandler(&out, &slog.HandlerOptions{Level: slog.LevelError}))
+	c := New(Options{Enabled: true, Version: "v0.2.1", Logger: quiet, NoticeLevel: slog.LevelError + 4})
+	c.record(Release{TagName: "v0.2.2"}, nil, t0)
+	if !strings.Contains(out.String(), "is available") {
+		t.Fatalf("notice hidden by an error-level logger:\n%s", out.String())
+	}
+}
+
 func TestDevBuildNeverChecks(t *testing.T) {
 	var calls int
 	fetch := func(ctx context.Context) (Release, error) { calls++; return Release{TagName: "v9.9.9"}, nil }
 
-	for _, v := range []string{"dev", "0.3.0-DEV", ""} {
+	for _, v := range []string{"dev", "0.3.0-DEV", "", "test-1-gabc1234"} {
 		c, _ := checker(t, v, fetch)
 		done := make(chan struct{})
 		go func() { c.Run(context.Background()); close(done) }()
@@ -321,7 +367,13 @@ func TestFetchAndStatusEndpoint(t *testing.T) {
 
 	rec = httptest.NewRecorder()
 	c.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/update", nil))
-	if rec.Code != http.StatusMethodNotAllowed {
-		t.Fatalf("POST /api/update = %d, want 405", rec.Code)
+	if rec.Code != http.StatusMethodNotAllowed || rec.Header().Get("Content-Type") != "application/json" {
+		t.Fatalf("POST /api/update = %d %s, want 405 application/json", rec.Code, rec.Header().Get("Content-Type"))
+	}
+	var e struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &e); err != nil || e.Error != "method not allowed" {
+		t.Fatalf("405 body = %q (%v)", rec.Body.String(), err)
 	}
 }

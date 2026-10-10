@@ -9,6 +9,7 @@
 #
 # Preserved from the existing config (the user's customization survives):
 #   - meter.vendor_id and meter.product_id         (hardware-specific IDs)
+#   - updates.check                                (opt-out of the GitHub release check)
 #
 # Backups:
 #   The previous /etc/lp700-server/config.toml and /etc/udev/rules.d/99-lp700.rules
@@ -189,10 +190,12 @@ sudo udevadm control --reload-rules
 sudo udevadm trigger
 rm -f /tmp/99-lp700.rules
 
-# ---- config.toml: backup-if-changed + replace, preserving meter.vendor_id / product_id ----
+# ---- config.toml: backup-if-changed + replace, preserving meter.vendor_id /
+# ---- product_id and updates.check ----
 sudo install -d -m 0755 /etc/lp700-server
 USER_VID_LINE=""
 USER_PID_LINE=""
+USER_UPD_LINE=""
 if [ -f /etc/lp700-server/config.toml ]; then
   USER_VID_LINE="$(awk '
     /^[[:space:]]*\[meter\][[:space:]]*$/ { in_meter=1; next }
@@ -204,19 +207,29 @@ if [ -f /etc/lp700-server/config.toml ]; then
     /^[[:space:]]*\[/ { in_meter=0 }
     in_meter && /^[[:space:]]*product_id[[:space:]]*=/ { print; exit }
   ' /etc/lp700-server/config.toml)"
+  USER_UPD_LINE="$(awk '
+    /^[[:space:]]*\[updates\][[:space:]]*$/ { in_updates=1; next }
+    /^[[:space:]]*\[/ { in_updates=0 }
+    in_updates && /^[[:space:]]*check[[:space:]]*=/ { print; exit }
+  ' /etc/lp700-server/config.toml)"
   [ -n "$USER_VID_LINE" ] && echo "  preserving meter.vendor_id: $USER_VID_LINE"
   [ -n "$USER_PID_LINE" ] && echo "  preserving meter.product_id: $USER_PID_LINE"
+  [ -n "$USER_UPD_LINE" ] && echo "  preserving updates.check: $USER_UPD_LINE"
 fi
 
 TMP_NEW="$(mktemp)"
-awk -v vid="$USER_VID_LINE" -v pid="$USER_PID_LINE" '
-  /^[[:space:]]*\[meter\][[:space:]]*$/ { in_meter=1; print; next }
-  /^[[:space:]]*\[/ { in_meter=0; print; next }
-  in_meter && /^[[:space:]]*vendor_id[[:space:]]*=/ {
+awk -v vid="$USER_VID_LINE" -v pid="$USER_PID_LINE" -v upd="$USER_UPD_LINE" '
+  /^[[:space:]]*\[meter\][[:space:]]*$/ { section="meter"; print; next }
+  /^[[:space:]]*\[updates\][[:space:]]*$/ { section="updates"; print; next }
+  /^[[:space:]]*\[/ { section=""; print; next }
+  section == "meter" && /^[[:space:]]*vendor_id[[:space:]]*=/ {
     if (vid != "") { print vid; next }
   }
-  in_meter && /^[[:space:]]*product_id[[:space:]]*=/ {
+  section == "meter" && /^[[:space:]]*product_id[[:space:]]*=/ {
     if (pid != "") { print pid; next }
+  }
+  section == "updates" && /^[[:space:]]*check[[:space:]]*=/ {
+    if (upd != "") { print upd; next }
   }
   { print }
 ' /tmp/config.example.toml > "$TMP_NEW"

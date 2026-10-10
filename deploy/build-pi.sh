@@ -18,10 +18,11 @@ go mod tidy
 
 ARCH="${ARCH:-arm64}"
 # Stamp the version the update check compares (internal/update): the
-# release tag at a tagged commit, e.g. v0.2.1-3-g92ace11 after it. Without
-# git or tags the binary stays "dev" and never checks on its own.
-# VERSION=vX.Y.Z overrides.
-VERSION="${VERSION:-$(git describe --tags --dirty 2>/dev/null || echo dev)}"
+# release tag at a tagged commit, e.g. v0.2.1-3-g92ace11 after it. Only
+# vX.Y.Z tags count (--match), so a scratch tag cannot masquerade as a
+# version. Without git or tags the binary stays "dev" and never checks on
+# its own. VERSION=vX.Y.Z overrides.
+VERSION="${VERSION:-$(git describe --tags --match 'v[0-9]*' --dirty 2>/dev/null || echo dev)}"
 LDFLAGS="-s -w -X main.version=$VERSION"
 export CGO_ENABLED=0
 

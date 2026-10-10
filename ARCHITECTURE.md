@@ -219,6 +219,7 @@ the meter's **Power/SWR** screen:
 - **Backend** indicator (HID vs SIMULATOR) — obvious when looking at
   synthesised data
 - **Setup overlay** — runtime log-level picker; shows the server version
+  (from `GET /api/config`)
 - **Update notice** — a one-line *"LP-700-Server vX is available —
   release notes"* bar under the header, from `GET /api/update`, when the
   server's release check has found a newer release

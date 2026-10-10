@@ -1,13 +1,27 @@
 name: Release
 
-# Tag-triggered: pushing a tag like `v1.0.0` cross-compiles binaries for
-# every supported platform and publishes a GitHub Release with the
-# binaries attached and changelog auto-generated from commits since the
-# previous tag.
+# Every push to main — in practice, every merged PR — cuts a release: the
+# patch number of the highest existing vX.Y.Z tag is bumped, the tree is
+# vetted, tested and cross-compiled for every supported platform, the new
+# tag is pushed, and a GitHub Release is published with the binaries
+# attached and a changelog auto-generated from the PRs merged since the
+# previous tag. A failed test or build pushes no tag.
+#
+# Minor / major bumps: push the tag yourself
+# (`git tag v0.3.0 && git push origin v0.3.0`). The tag push releases that
+# version and later merges continue from it (v0.3.1, ...). Do it on a
+# commit that has not been auto-released yet, or that commit gets a second
+# release. A commit whose message contains `[skip ci]` is not released
+# (GitHub skips every workflow for it).
 #
 # Manual dispatch is also supported (Actions tab → Release → Run
-# workflow), in case you want to ship a tag that's already been pushed,
-# or you want to re-cut the artifacts after a pipeline fix.
+# workflow): with a tag in the version box it re-cuts that tag's
+# artifacts (after a pipeline fix, say); left blank on main it cuts the
+# next patch release, the same as a merge would.
+#
+# The tag this workflow pushes is created with GITHUB_TOKEN, which never
+# triggers another workflow run, so the main push and the tag it creates
+# do not release twice.
 #
 # Pure-Go build: HID is implemented via /dev/hidraw on Linux, so no
 # CGO / cross-toolchain is needed. Single ubuntu-latest runner cross-
@@ -15,17 +29,24 @@ name: Release
 
 on:
   push:
+    branches: [main]
     tags:
       - 'v*.*.*'
   workflow_dispatch:
     inputs:
       version:
-        description: 'Tag to release (must already exist, e.g. v1.0.0). Leave blank to use the tag that triggered the run.'
+        description: 'Existing tag to (re-)release, e.g. v1.0.0. Leave blank to cut the next patch release from this branch.'
         required: false
         type: string
 
 permissions:
   contents: write
+
+# Merges that land close together release one after the other, each
+# bumping from the tag the previous run pushed.
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
   release:
@@ -40,23 +61,52 @@ jobs:
         id: ver
         run: |
           set -euo pipefail
+          CREATE_TAG=false
           if [ -n "${{ inputs.version }}" ]; then
             VERSION="${{ inputs.version }}"
-          else
+          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
             VERSION="${GITHUB_REF#refs/tags/}"
+          else
+            # Push to main. Skip when this commit already carries a version
+            # tag (a manual tag push, or a re-run of this workflow).
+            EXISTING="$(git tag --points-at HEAD -l 'v[0-9]*.[0-9]*.[0-9]*' | head -1)"
+            if [ -n "$EXISTING" ]; then
+              echo "HEAD is already tagged $EXISTING; nothing to release"
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            # Bump the patch of the highest plain vX.Y.Z tag (pre-release
+            # tags such as v1.0.0-rc.1 are not a base).
+            LATEST="$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1 || true)"
+            LATEST="${LATEST:-v0.0.0}"
+            IFS=. read -r MAJOR MINOR PATCH <<< "${LATEST#v}"
+            VERSION="v$MAJOR.$MINOR.$((PATCH + 1))"
+            CREATE_TAG=true
+            echo "bumping $LATEST -> $VERSION"
           fi
           if ! [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
             echo "::error::version must look like vX.Y.Z (got: $VERSION)"
             exit 1
           fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "create_tag=$CREATE_TAG" >> "$GITHUB_OUTPUT"
 
       - uses: actions/setup-go@v5
+        if: steps.ver.outputs.skip != 'true'
         with:
           go-version: '1.22'
           cache: true
 
+      - name: Vet + test
+        if: steps.ver.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+          go vet ./...
+          go test -race ./...
+
       - name: Build binaries
+        if: steps.ver.outputs.skip != 'true'
         env:
           CGO_ENABLED: '0'
           # -X main.version stamps the release tag into the binary; the
@@ -75,7 +125,18 @@ jobs:
           (cd dist && sha256sum lp700-server-* > SHA256SUMS)
           ls -la dist/
 
+      - name: Tag
+        if: steps.ver.outputs.create_tag == 'true'
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.ver.outputs.version }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$VERSION" -m "Release $VERSION"
+          git push origin "$VERSION"
+
       - name: Create release
+        if: steps.ver.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

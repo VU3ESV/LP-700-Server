@@ -280,7 +280,7 @@
     } catch {}
     if (typeof setup.showModal === "function") setup.showModal(); else setup.setAttribute("open","");
     $("setupNote").textContent = "Backend: " + bootCfg.backend + (bootCfg.backend === "simulator" ? " (synthesised data)" : "")
-      + (serverVersion ? " · Server " + serverVersion : "");
+      + (bootCfg.version ? " · Server " + bootCfg.version : "");
   });
   $("setupClose").addEventListener("click", () => setup.close ? setup.close() : setup.removeAttribute("open"));
   $("logLevel").addEventListener("change", async (e) => {
@@ -302,13 +302,11 @@
 
   // Update notice: the cached result of the server's GitHub release check
   // (the server asks GitHub at most once a day; this only reads the cache).
-  let serverVersion = "";
   function refreshUpdate() {
     fetch("/api/update", { cache: "no-store" })
       .then(r => r.ok ? r.json() : null)
       .then(u => {
         if (!u) return;
-        serverVersion = u.current || "";
         const el = $("updateNotice");
         const url = String(u.html_url || "");
         if (!u.update_available || !u.latest || !url.startsWith("https://github.com/")) {
