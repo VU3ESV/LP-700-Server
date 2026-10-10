@@ -73,14 +73,20 @@ meter uses different IDs, edit `/etc/udev/rules.d/99-lp700.rules` and run
 - [`.github/workflows/ci.yml`](.github/workflows/ci.yml) — `go vet`,
   `go test -race`, `go build` on every push and PR.
 - [`.github/workflows/release.yml`](.github/workflows/release.yml) —
-  triggered by pushing a `v*.*.*` tag. Cross-compiles
+  runs on every push to `main`, i.e. every merged PR. It bumps the patch
+  number of the highest `vX.Y.Z` tag, vets and tests, cross-compiles
   `linux/{amd64,arm64,armv7}` + `darwin/{amd64,arm64}` + `windows/amd64`,
-  attaches `SHA256SUMS`, auto-generates release notes from the previous
-  tag's commits. The tag is stamped into each binary
-  (`-ldflags "-X main.version=<tag>"`); `lp700-server -version` prints it.
+  pushes the new tag, and publishes a GitHub Release with the binaries,
+  `SHA256SUMS`, and notes auto-generated from the PRs since the previous
+  tag. A failed test or build pushes no tag. The tag is stamped into each
+  binary (`-ldflags "-X main.version=<tag>"`); `lp700-server -version`
+  prints it.
+
+For a minor or major bump, push the tag yourself; the tag push releases
+that version and later merges continue from it:
 
 ```sh
-git tag v0.1.0 && git push origin v0.1.0
+git tag v0.3.0 && git push origin v0.3.0
 ```
 
 ## Configuration
