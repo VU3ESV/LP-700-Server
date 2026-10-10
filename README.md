@@ -119,7 +119,10 @@ The server tells you when a newer LP-700-Server release is out. About a
 minute after start, and then at most once a day while it runs, it makes
 one anonymous request to GitHub —
 `GET https://api.github.com/repos/VU3ESV/LP-700-Server/releases/latest` —
-and compares the release tag with its own version. A newer release is:
+and compares the release tag with its own version (`vX.Y.Z` tuples; a
+pre-release such as `v1.0.0-rc.1` sorts below `v1.0.0`, and a
+`git describe` build such as `v0.2.1-3-g92ace11` sorts above the tag it
+follows). A newer release is:
 
 - shown as a notice at the top of the web UI —
   *"LP-700-Server vX.Y.Z is available (running …) — release notes"*;
@@ -136,10 +139,12 @@ starts after a successful answer. Nothing is written to disk, so a
 restart checks once more about a minute after start.
 
 - **Turn it off:** `[updates] check = false` in `config.toml`, then
-  restart the service.
+  restart the service. `deploy/redeploy.sh` keeps that setting when it
+  regenerates `config.toml`.
 - **Development builds** (a plain `go build` / `go run`, version `dev`)
-  never check. `deploy/build-pi.sh` stamps `git describe --tags`, and the
-  release workflow stamps the tag.
+  never check, and neither does a binary whose version has no `vX.Y.Z`
+  core. `deploy/build-pi.sh` stamps `git describe --tags --match 'v[0-9]*'`,
+  and the release workflow stamps the tag.
 - **See the notice against the real latest release:** run with
   `LP700_SERVER_UPDATE_TEST_VERSION=0.0.1` set (ignored unless set); the
   first check comes a minute after start.
@@ -169,7 +174,7 @@ or WireGuard and bind the listen address to the VPN interface (or
 | `/`              | Embedded reference web client                                                            |
 | `/ws`            | Telemetry stream + control verbs (see [ARCHITECTURE.md §4](ARCHITECTURE.md))             |
 | `/healthz`       | `ok\n` — for systemd / monitoring probes                                                 |
-| `/api/config`    | `{backend, allow_control, title}` — UI bootstrap                                         |
+| `/api/config`    | `{backend, allow_control, title, version}` — UI bootstrap                                |
 | `/api/log-level` | GET / POST the running slog level (`error`/`warn`/`info`/`debug`)                        |
 | `/api/update`    | GET — cached result of the GitHub release check (see [Updates](#updates))                |
 

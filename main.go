@@ -27,6 +27,12 @@ import (
 // "dev", which never runs the automatic update check.
 var version = "dev"
 
+// levelNotice sits above every level /api/log-level can select, so a line
+// logged at it is always printed: operator-facing events that are not
+// errors (log level changed, a newer release is available). The handler
+// prints it as NOTICE.
+const levelNotice = slog.LevelError + 4
+
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "probe" {
 		os.Exit(runProbeSubcommand(os.Args[2:]))
@@ -48,7 +54,15 @@ func main() {
 	if *verbose {
 		levelVar.Set(slog.LevelDebug)
 	}
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: &levelVar}))
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+		Level: &levelVar,
+		ReplaceAttr: func(_ []string, a slog.Attr) slog.Attr {
+			if lvl, ok := a.Value.Any().(slog.Level); ok && a.Key == slog.LevelKey && lvl == levelNotice {
+				a.Value = slog.StringValue("NOTICE")
+			}
+			return a
+		},
+	}))
 
 	cfg, err := config.Load(*configPath)
 	if err != nil {
@@ -113,6 +127,7 @@ func main() {
 			"backend":       string(backend),
 			"allow_control": cfg.Server.AllowControl,
 			"title":         cfg.UI.Title,
+			"version":       version,
 		})
 	})
 	mux.HandleFunc("/api/log-level", func(w http.ResponseWriter, r *http.Request) {
@@ -126,32 +141,32 @@ func main() {
 				Level string `json:"level"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				http.Error(w, `{"error":"bad json"}`, http.StatusBadRequest)
+				web.WriteJSONError(w, http.StatusBadRequest, "bad json")
 				return
 			}
 			lvl, ok := parseSlogLevel(req.Level)
 			if !ok {
-				http.Error(w, `{"error":"level must be one of: error, warn, info, debug"}`, http.StatusBadRequest)
+				web.WriteJSONError(w, http.StatusBadRequest, "level must be one of: error, warn, info, debug")
 				return
 			}
 			prev := levelVar.Level()
 			levelVar.Set(lvl)
-			logger.Error("log level changed", "from", slogLevelName(prev), "to", slogLevelName(lvl), "remote", r.RemoteAddr)
+			logger.Log(r.Context(), levelNotice, "log level changed", "from", slogLevelName(prev), "to", slogLevelName(lvl), "remote", r.RemoteAddr)
 			_ = json.NewEncoder(w).Encode(map[string]string{"level": slogLevelName(lvl)})
 		default:
 			w.Header().Set("Allow", "GET, POST")
-			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+			web.WriteJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		}
 	})
 	// GitHub release check: its own goroutine and http.Client, never on a
-	// request path or near the HID owner. A newer release is logged once on
-	// a handler that prints whatever the runtime log level is, and served
+	// request path or near the HID owner. A newer release is logged once at
+	// levelNotice (printed whatever the runtime log level is) and served
 	// read-only at /api/update for the web UI's notice.
 	updates := update.New(update.Options{
-		Enabled: cfg.Updates.Check,
-		Version: version,
-		Logger:  logger,
-		Notice:  slog.New(slog.NewTextHandler(os.Stderr, nil)),
+		Enabled:     cfg.Updates.Check,
+		Version:     version,
+		Logger:      logger,
+		NoticeLevel: levelNotice,
 	})
 	mux.Handle("/api/update", updates)
 	mux.Handle("/", web.StaticHandler())

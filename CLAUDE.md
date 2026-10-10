@@ -272,19 +272,25 @@ them empty and the web UI hides the rows that would have shown them.
 | `/`              | GET        | Embedded reference web client                                 |
 | `/ws`            | GET (WS)   | Telemetry stream + control verbs (see ARCHITECTURE.md §4)     |
 | `/healthz`       | GET        | `ok\n` for systemd / monitoring probes                        |
-| `/api/config`    | GET        | `{backend, allow_control, title}` — UI bootstrap              |
+| `/api/config`    | GET        | `{backend, allow_control, title, version}` — UI bootstrap     |
 | `/api/log-level` | GET / POST | Read or change the running slog level (in-memory, no persist) |
 | `/api/update`    | GET        | Cached GitHub release check: `{enabled, automatic, current, update_available, latest, html_url, checked_at}` |
 
 **Version + update check.** `main.version` is stamped with
 `-ldflags "-X main.version=vX.Y.Z"` by the release workflow and
-`deploy/build-pi.sh` (`git describe --tags`); unstamped builds are `dev`.
-`internal/update` asks `api.github.com/repos/VU3ESV/LP-700-Server/releases/latest`
-a minute after start and at most once per 24 h after a *successful* answer
-(1 h back-off after a failure, all in memory), never for a `dev` version;
-`[updates] check = false` turns it off. It logs a newer release once (on a
-handler that ignores the runtime level) and the web UI shows a notice.
-It never downloads anything and never touches the HID owner or the hub.
+`deploy/build-pi.sh` (`git describe --tags --match 'v[0-9]*'`); unstamped
+builds are `dev`. `internal/update` asks
+`api.github.com/repos/VU3ESV/LP-700-Server/releases/latest` a minute after
+start and at most once per 24 h after a *successful* answer (1 h back-off
+after a failure, all in memory), never for a `dev` version or one without
+a `vX.Y.Z` core; `[updates] check = false` turns it off, and
+`deploy/redeploy.sh` preserves that key. Versions compare as tuples with
+a pre-release suffix below its release and a `git describe` build above
+its tag (`update.ParseVersion` / `update.Compare`). A newer release is
+logged once at `levelNotice` (`main.go`: above every level
+`/api/log-level` can select, printed as `NOTICE`; the same level the
+"log level changed" line uses) and the web UI shows a notice. It never
+downloads anything and never touches the HID owner or the hub.
 
 ## Diagnostic subcommands
 

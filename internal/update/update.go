@@ -8,9 +8,11 @@
 //     with Accept: application/vnd.github+json and
 //     User-Agent: LP-700-Server/<version>, a 10 s timeout and no token.
 //     That endpoint never returns drafts or prereleases.
-//   - Versions compare numerically: a leading "v" is dropped, both sides
-//     are split into integers on any non-digit and compared as tuples,
-//     missing parts counting as 0 (v0.2.10 > v0.2.9, 1.0 == 1.0.0).
+//   - Versions compare as vX.Y.Z tuples (leading "v" optional, missing
+//     parts count as 0: v0.2.10 > v0.2.9, 1.0 == 1.0.0). A pre-release
+//     suffix sorts below its release (v1.0.0-rc.1 < v1.0.0) and a
+//     `git describe` build sorts above the tag it follows
+//     (v0.2.1 < v0.2.1-3-g92ace11 < v0.2.2). See ParseVersion.
 //   - About a minute after start, then re-evaluated every hour for as long
 //     as the server runs. A check goes out only when [updates] check is on
 //     (the default), 24 h have passed since the last SUCCESSFUL check, and
@@ -21,11 +23,12 @@
 //     checks again a minute after start.
 //   - Failures (offline, timeout, any HTTP error including the 403 rate
 //     limit, bad JSON) are silent: one debug log line.
-//   - A newer release is logged once per release tag on the notice logger
-//     (always printed, whatever the runtime log level) and exposed to the
-//     web UI through GET /api/update, a read-only snapshot.
+//   - A newer release is logged once per release tag at Options.NoticeLevel
+//     (main passes a level above anything the runtime filter can hide) and
+//     exposed to the web UI through GET /api/update, a read-only snapshot.
 //   - Development builds — a version containing "dev", any case, which is
-//     what a plain `go build` gets — never check.
+//     what a plain `go build` gets — and versions without a numeric core
+//     (nothing to compare against) never check.
 //   - Nothing is downloaded or installed. Updating stays the operator's
 //     job (deploy/redeploy.sh or the release binaries).
 //
@@ -38,6 +41,7 @@
 package update
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -46,11 +50,16 @@ import (
 	"log/slog"
 	"math"
 	"net/http"
+	"net/url"
 	"os"
+	"path"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"lp700-server/internal/web"
 )
 
 const (
@@ -59,8 +68,9 @@ const (
 	// ProductName is shown in the notice and is the User-Agent product.
 	ProductName = "LP-700-Server"
 
-	apiURL      = "https://api.github.com/repos/" + Repository + "/releases/latest"
-	releasesURL = "https://github.com/" + Repository + "/releases"
+	apiURL       = "https://api.github.com/repos/" + Repository + "/releases/latest"
+	releasesPath = "/" + Repository + "/releases"
+	releasesURL  = "https://github.com" + releasesPath
 
 	// TestVersionEnv replaces the running version when set (test hook).
 	TestVersionEnv = "LP700_SERVER_UPDATE_TEST_VERSION"
@@ -99,39 +109,128 @@ func DisplayVersion(v string) string {
 	return v
 }
 
-// VersionComponents: "v1.10.2-rc3" → [1 10 2 3], integers split on any
-// non-digit.
-func VersionComponents(v string) []int {
-	var out []int
-	for _, part := range strings.FieldsFunc(DisplayVersion(v), func(r rune) bool {
-		return r < '0' || r > '9'
-	}) {
-		n, err := strconv.Atoi(part)
-		if err != nil {
-			n = math.MaxInt // absurdly long digit run
+// Version is a parsed version string: the dotted numeric core, the
+// pre-release identifiers (nil for a release) and, for a `git describe`
+// build, how many commits it is past its tag.
+type Version struct {
+	Core  []int
+	Pre   []string
+	Ahead int
+}
+
+// describeTail is the "-<commits>-g<hash>" that `git describe` appends
+// after a tag (a trailing "-dirty" is stripped before matching).
+var describeTail = regexp.MustCompile(`-(\d+)-g[0-9a-fA-F]{4,}$`)
+
+// ParseVersion reads every shape this project stamps into a binary:
+//
+//	v1.2.3                     a release
+//	v1.2.3-rc.1, v1.2.3-beta   a pre-release, below the bare v1.2.3
+//	v1.2.3-5-gabc1234[-dirty]  git describe, 5 commits past the tag: above
+//	                           the bare v1.2.3, below v1.2.4
+//	v1.2.3-rc.1-5-gabc1234     5 commits past a pre-release tag
+//
+// Core is nil when the string does not start with a dotted number
+// ("dev", "test", ""): such a version cannot be compared at all.
+func ParseVersion(v string) Version {
+	s := strings.TrimSuffix(DisplayVersion(v), "-dirty")
+	var out Version
+	if m := describeTail.FindStringSubmatch(s); m != nil {
+		out.Ahead, _ = digits(m[1])
+		s = strings.TrimSuffix(s, m[0])
+	}
+	core, pre, hasPre := strings.Cut(s, "-")
+	for _, part := range strings.Split(core, ".") {
+		n, ok := digits(part)
+		if !ok {
+			return Version{}
 		}
-		out = append(out, n)
+		out.Core = append(out.Core, n)
+	}
+	if hasPre {
+		out.Pre = strings.Split(pre, ".")
 	}
 	return out
 }
 
-// IsNewer reports whether candidate is strictly greater than current,
-// compared as integer tuples with missing components counting as 0.
-func IsNewer(candidate, current string) bool {
-	a, b := VersionComponents(candidate), VersionComponents(current)
-	for i := 0; i < len(a) || i < len(b); i++ {
-		var x, y int
-		if i < len(a) {
-			x = a[i]
-		}
-		if i < len(b) {
-			y = b[i]
-		}
-		if x != y {
-			return x > y
+// Compare orders two versions: -1 when a is older than b, 0 when equal,
+// +1 when newer. Cores compare as integer tuples with missing parts
+// counting as 0. At an equal core a pre-release sits below the release,
+// and pre-release identifiers follow semver precedence (numeric before
+// alphanumeric, numeric by value, alphanumeric by ASCII, more identifiers
+// win a tie). Last, a describe build sits above the tag it follows,
+// ordered by commit count.
+func Compare(a, b Version) int {
+	for i := 0; i < len(a.Core) || i < len(b.Core); i++ {
+		if c := cmp.Compare(at(a.Core, i), at(b.Core, i)); c != 0 {
+			return c
 		}
 	}
-	return false
+	if (a.Pre == nil) != (b.Pre == nil) {
+		if a.Pre == nil {
+			return 1
+		}
+		return -1
+	}
+	for i := 0; i < len(a.Pre) && i < len(b.Pre); i++ {
+		if c := comparePreID(a.Pre[i], b.Pre[i]); c != 0 {
+			return c
+		}
+	}
+	if c := cmp.Compare(len(a.Pre), len(b.Pre)); c != 0 {
+		return c
+	}
+	return cmp.Compare(a.Ahead, b.Ahead)
+}
+
+// at is xs[i], or 0 past the end.
+func at(xs []int, i int) int {
+	if i < len(xs) {
+		return xs[i]
+	}
+	return 0
+}
+
+func comparePreID(x, y string) int {
+	nx, xNum := digits(x)
+	ny, yNum := digits(y)
+	switch {
+	case xNum && yNum:
+		return cmp.Compare(nx, ny)
+	case xNum:
+		return -1
+	case yNum:
+		return 1
+	}
+	return strings.Compare(x, y)
+}
+
+// digits parses an all-digit string; an absurdly long run saturates.
+func digits(s string) (int, bool) {
+	if s == "" {
+		return 0, false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return 0, false
+		}
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return math.MaxInt, true
+	}
+	return n, true
+}
+
+// IsNewer reports whether candidate is strictly newer than current. Either
+// side without a numeric core cannot be compared, so the answer is false:
+// no notice is ever shown for a version the checker does not understand.
+func IsNewer(candidate, current string) bool {
+	a, b := ParseVersion(candidate), ParseVersion(current)
+	if a.Core == nil || b.Core == nil {
+		return false
+	}
+	return Compare(a, b) > 0
 }
 
 // IsDevVersion reports whether v marks a development build: it contains
@@ -140,15 +239,12 @@ func IsDevVersion(v string) bool {
 	return strings.Contains(strings.ToLower(v), "dev")
 }
 
-// ShouldCheck is the rule for every automatic attempt: the setting is on,
-// 24 h have passed since the last successful check (or there has been
-// none, or its time lies in the future because the clock was wrong), and
-// the 1 h back-off after a failed check is over (a failure time in the
-// future does not hold it).
-func ShouldCheck(enabled bool, lastSuccess, lastFailure, now time.Time) bool {
-	if !enabled {
-		return false
-	}
+// ShouldCheck is the rule for every automatic attempt (Run has already
+// settled that the setting is on): 24 h have passed since the last
+// successful check (or there has been none, or its time lies in the
+// future because the clock was wrong), and the 1 h back-off after a
+// failed check is over (a failure time in the future does not hold it).
+func ShouldCheck(lastSuccess, lastFailure, now time.Time) bool {
 	if !lastSuccess.IsZero() {
 		if elapsed := now.Sub(lastSuccess); elapsed >= 0 && elapsed < MinimumInterval {
 			return false
@@ -187,12 +283,15 @@ func ParseRelease(status int, header http.Header, body []byte) (Release, error) 
 }
 
 // releasePage only ever links the operator to this repository's release
-// pages: GitHub's html_url when it is one of them, else the releases list.
+// pages: GitHub's html_url when, after path normalisation, it is one of
+// them; else the releases list.
 func releasePage(htmlURL string) string {
-	if strings.HasPrefix(htmlURL, releasesURL+"/") {
-		return htmlURL
+	u, err := url.Parse(htmlURL)
+	if err != nil || u.Scheme != "https" || u.Host != "github.com" || u.User != nil ||
+		!strings.HasPrefix(path.Clean(u.Path), releasesPath+"/") {
+		return releasesURL
 	}
-	return releasesURL
+	return htmlURL
 }
 
 // ---------------------------------------------------------------------------
@@ -204,11 +303,13 @@ type Options struct {
 	Enabled bool
 	// Version is the running version (main.version, stamped by -ldflags).
 	Version string
-	// Logger gets the routine lines (start, debug on failure).
+	// Logger gets the routine lines (start, debug on failure) and the one
+	// line per newer release, which is logged at NoticeLevel.
 	Logger *slog.Logger
-	// Notice gets the one line per newer release; it should print whatever
-	// the runtime log level is. Defaults to Logger.
-	Notice *slog.Logger
+	// NoticeLevel is the level of the "newer release" line. main passes a
+	// level above anything /api/log-level can select, so the line is
+	// printed whatever the runtime level is. Zero means slog.LevelInfo.
+	NoticeLevel slog.Level
 
 	FirstDelay time.Duration
 	Interval   time.Duration
@@ -221,16 +322,16 @@ type Options struct {
 
 // Checker runs the background check and keeps its last result.
 type Checker struct {
-	enabled    bool
-	current    string // what is compared (the test hook's value when set)
-	automatic  bool   // false for a development build
-	testHook   bool
-	logger     *slog.Logger
-	notice     *slog.Logger
-	firstDelay time.Duration
-	interval   time.Duration
-	fetch      func(ctx context.Context) (Release, error)
-	now        func() time.Time
+	enabled     bool
+	current     string // what is compared (the test hook's value when set)
+	automatic   bool   // false for a development or unversioned build
+	testHook    bool
+	logger      *slog.Logger
+	noticeLevel slog.Level
+	firstDelay  time.Duration
+	interval    time.Duration
+	fetch       func(ctx context.Context) (Release, error)
+	now         func() time.Time
 
 	mu          sync.Mutex
 	lastSuccess time.Time
@@ -242,20 +343,17 @@ type Checker struct {
 // New builds a Checker; call Run on its own goroutine.
 func New(opts Options) *Checker {
 	c := &Checker{
-		enabled:    opts.Enabled,
-		current:    strings.TrimSpace(opts.Version),
-		logger:     opts.Logger,
-		notice:     opts.Notice,
-		firstDelay: opts.FirstDelay,
-		interval:   opts.Interval,
-		fetch:      opts.fetch,
-		now:        opts.now,
+		enabled:     opts.Enabled,
+		current:     strings.TrimSpace(opts.Version),
+		logger:      opts.Logger,
+		noticeLevel: opts.NoticeLevel,
+		firstDelay:  opts.FirstDelay,
+		interval:    opts.Interval,
+		fetch:       opts.fetch,
+		now:         opts.now,
 	}
 	if c.logger == nil {
 		c.logger = slog.New(slog.NewTextHandler(io.Discard, nil))
-	}
-	if c.notice == nil {
-		c.notice = c.logger
 	}
 	if c.firstDelay <= 0 {
 		c.firstDelay = FirstCheckDelay
@@ -269,7 +367,7 @@ func New(opts Options) *Checker {
 	if test := strings.TrimSpace(os.Getenv(TestVersionEnv)); test != "" {
 		c.current, c.testHook = test, true
 	}
-	c.automatic = c.testHook || (c.current != "" && !IsDevVersion(c.current))
+	c.automatic = c.testHook || (!IsDevVersion(c.current) && ParseVersion(c.current).Core != nil)
 	if c.fetch == nil {
 		target := opts.apiURL
 		if target == "" {
@@ -286,14 +384,14 @@ func New(opts Options) *Checker {
 
 // Run makes the first check about a minute after start and then
 // re-evaluates ShouldCheck every hour until ctx is done. It returns at once
-// when the setting is off or this is a development build.
+// when the setting is off or this is a development or unversioned build.
 func (c *Checker) Run(ctx context.Context) {
 	if !c.enabled {
 		c.logger.Info("update check off ([updates] check = false)")
 		return
 	}
 	if !c.automatic {
-		c.logger.Info("update check skipped: development build",
+		c.logger.Info("update check skipped: development or unversioned build",
 			"version", c.current, "hint", TestVersionEnv+"=<version> still checks")
 		return
 	}
@@ -317,14 +415,14 @@ func (c *Checker) Run(ctx context.Context) {
 // checkIfDue makes one attempt when ShouldCheck allows it.
 func (c *Checker) checkIfDue(ctx context.Context) {
 	c.mu.Lock()
-	due := ShouldCheck(c.enabled, c.lastSuccess, c.lastFailure, c.now())
+	due := ShouldCheck(c.lastSuccess, c.lastFailure, c.now())
 	c.mu.Unlock()
 	if !due {
 		return
 	}
-	reqCtx, cancel := context.WithTimeout(ctx, RequestTimeout)
-	rel, err := c.fetch(reqCtx)
-	cancel()
+	// The http.Client's Timeout bounds the request; ctx only cuts it short
+	// on shutdown.
+	rel, err := c.fetch(ctx)
 	if ctx.Err() != nil {
 		return // shutting down: neither a success nor a failure
 	}
@@ -358,7 +456,8 @@ func (c *Checker) record(rel Release, err error, now time.Time) {
 	c.mu.Unlock()
 
 	if logIt {
-		c.notice.Info(fmt.Sprintf("%s %s is available", ProductName, rel.TagName),
+		c.logger.Log(context.Background(), c.noticeLevel,
+			fmt.Sprintf("%s %s is available", ProductName, rel.TagName),
 			"running", c.current, "release_notes", releasePage(rel.HTMLURL))
 	} else if !newer {
 		c.logger.Debug("update check: up to date", "running", c.current, "latest", rel.TagName)
@@ -406,7 +505,7 @@ func (c *Checker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		w.Header().Set("Allow", "GET, HEAD")
-		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+		web.WriteJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	_ = json.NewEncoder(w).Encode(c.Status())

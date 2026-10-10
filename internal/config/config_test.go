@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/BurntSushi/toml"
 )
 
 func TestUpdateCheckDefaultsOnAndCanBeTurnedOff(t *testing.T) {
@@ -30,12 +32,26 @@ func TestUpdateCheckDefaultsOnAndCanBeTurnedOff(t *testing.T) {
 	}
 }
 
+// The shipped example must exist, parse, name only keys Config knows,
+// and leave the update check on. (Load() would quietly return defaults
+// for a missing file, which proves nothing.)
 func TestExampleConfigLoads(t *testing.T) {
-	cfg, err := Load(filepath.Join("..", "..", "deploy", "config.example.toml"))
+	data, err := os.ReadFile(filepath.Join("..", "..", "deploy", "config.example.toml"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !cfg.Updates.Check {
-		t.Fatal("deploy/config.example.toml should leave the update check on")
+	cfg := defaults()
+	md, err := toml.Decode(string(data), &cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unknown := md.Undecoded(); len(unknown) > 0 {
+		t.Fatalf("config.example.toml has keys Config does not know: %v", unknown)
+	}
+	if !md.IsDefined("updates", "check") || !cfg.Updates.Check {
+		t.Fatalf("config.example.toml should set [updates] check = true, got %v", cfg.Updates.Check)
+	}
+	if err := cfg.validate(); err != nil {
+		t.Fatal(err)
 	}
 }
