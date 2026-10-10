@@ -39,6 +39,7 @@ showing, updated several times a second.
 | **HID** / SIMULATOR    | Backend pill. Green **HID** = real meter on USB. Yellow **SIMULATOR** = synthesised data; the server didn't find a meter on USB. |
 | **live** / disconnected | Connection state to the WebSocket. Green = receiving frames; yellow = reconnecting; red = error.            |
 | Setup (top-right)      | Opens the runtime settings overlay (see [§4](#4-runtime-settings-setup-overlay)).                            |
+| Update notice          | Appears under the header only when a newer LP-700-Server release is published on GitHub: *"LP-700-Server vX.Y.Z is available (running …) — release notes"*. The server checks at most once a day; nothing is installed for you. Turn it off with `[updates] check = false` in `config.toml`. |
 | Average power          | Average forward power in watts (the meter's `AV` reading).                                                   |
 | Peak power             | In **Peak Hold** mode, the firmware-maintained held peak (sticks at the maximum until the meter clears it). In **Average** or **Tune** mode, the live envelope peak this poll cycle. Mirrors the meter's `PK` reading. |
 | SWR                    | Standing-wave ratio, floor 1.00.                                                                             |
@@ -95,7 +96,8 @@ Click **Setup** in the header to open the overlay.
   setting is in-memory only and resets to the level passed at start
   (`-v` or default `error`) when the service restarts.
 - **Backend** line at the bottom — restates whether you're looking at
-  real meter data (`hid`) or `simulator` (synthesised data).
+  real meter data (`hid`) or `simulator` (synthesised data), followed by
+  the server version.
 
 Same surface is reachable directly via:
 

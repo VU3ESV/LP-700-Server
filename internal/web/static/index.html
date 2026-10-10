@@ -100,6 +100,12 @@
   dialog.setup label { display: block; margin: 10px 0 4px; font-size: 12px; color: var(--muted); }
   dialog.setup select { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); padding: 4px 6px; border-radius: 4px; }
   dialog.setup .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; }
+  .update-notice {
+    width: calc(100% - 28px); max-width: 852px; margin: 12px auto 0;
+    padding: 8px 12px; border-radius: 8px; font-size: 13px;
+    background: var(--panel-2); border: 1px solid var(--accent); color: var(--text);
+  }
+  .update-notice a { color: var(--accent); }
 </style>
 </head>
 <body>
@@ -112,6 +118,10 @@
     <button class="cmd" id="setupBtn" type="button">Setup</button>
   </div>
 </header>
+
+<!-- Filled from GET /api/update when the server's GitHub release check
+     has found a newer LP-700-Server release. -->
+<div id="updateNotice" class="update-notice" role="status" hidden></div>
 
 <main>
   <section class="panel">
@@ -269,7 +279,8 @@
       $("logLevel").value = j.level || "error";
     } catch {}
     if (typeof setup.showModal === "function") setup.showModal(); else setup.setAttribute("open","");
-    $("setupNote").textContent = "Backend: " + bootCfg.backend + (bootCfg.backend === "simulator" ? " (synthesised data)" : "");
+    $("setupNote").textContent = "Backend: " + bootCfg.backend + (bootCfg.backend === "simulator" ? " (synthesised data)" : "")
+      + (serverVersion ? " · Server " + serverVersion : "");
   });
   $("setupClose").addEventListener("click", () => setup.close ? setup.close() : setup.removeAttribute("open"));
   $("logLevel").addEventListener("change", async (e) => {
@@ -288,6 +299,34 @@
       document.querySelectorAll("button.cmd").forEach(b => { if (b.id !== "setupBtn" && b.id !== "setupClose") b.disabled = true; });
     }
   }).catch(() => {});
+
+  // Update notice: the cached result of the server's GitHub release check
+  // (the server asks GitHub at most once a day; this only reads the cache).
+  let serverVersion = "";
+  function refreshUpdate() {
+    fetch("/api/update", { cache: "no-store" })
+      .then(r => r.ok ? r.json() : null)
+      .then(u => {
+        if (!u) return;
+        serverVersion = u.current || "";
+        const el = $("updateNotice");
+        const url = String(u.html_url || "");
+        if (!u.update_available || !u.latest || !url.startsWith("https://github.com/")) {
+          el.hidden = true;
+          return;
+        }
+        const link = document.createElement("a");
+        link.href = url; link.target = "_blank"; link.rel = "noopener";
+        link.textContent = "release notes";
+        el.replaceChildren(
+          document.createTextNode("LP-700-Server " + u.latest + " is available (running " + u.current + ") — "),
+          link);
+        el.hidden = false;
+      })
+      .catch(() => {});
+  }
+  refreshUpdate();
+  setInterval(refreshUpdate, 60 * 60 * 1000);
 
   // WebSocket loop
   let ws;

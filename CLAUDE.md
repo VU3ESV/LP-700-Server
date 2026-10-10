@@ -26,6 +26,7 @@ LP-700-Server/
 │   ├── lpmeter/         # HID owner, frame decoder, snapshot model,
 │   │                    #   simulator backend, probe diagnostics
 │   ├── hub/             # WebSocket fan-out / fan-in / heartbeats
+│   ├── update/          # GitHub new-release check (own goroutine) + /api/update
 │   └── web/static/      # reference web client (embedded via go:embed)
 ├── deploy/              # build-pi.sh, install.sh, redeploy.sh,
 │                        #   systemd unit, udev rule, config.example.toml
@@ -273,6 +274,17 @@ them empty and the web UI hides the rows that would have shown them.
 | `/healthz`       | GET        | `ok\n` for systemd / monitoring probes                        |
 | `/api/config`    | GET        | `{backend, allow_control, title}` — UI bootstrap              |
 | `/api/log-level` | GET / POST | Read or change the running slog level (in-memory, no persist) |
+| `/api/update`    | GET        | Cached GitHub release check: `{enabled, automatic, current, update_available, latest, html_url, checked_at}` |
+
+**Version + update check.** `main.version` is stamped with
+`-ldflags "-X main.version=vX.Y.Z"` by the release workflow and
+`deploy/build-pi.sh` (`git describe --tags`); unstamped builds are `dev`.
+`internal/update` asks `api.github.com/repos/VU3ESV/LP-700-Server/releases/latest`
+a minute after start and at most once per 24 h after a *successful* answer
+(1 h back-off after a failure, all in memory), never for a `dev` version;
+`[updates] check = false` turns it off. It logs a newer release once (on a
+handler that ignores the runtime level) and the web UI shows a notice.
+It never downloads anything and never touches the HID owner or the hub.
 
 ## Diagnostic subcommands
 

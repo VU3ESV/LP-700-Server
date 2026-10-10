@@ -17,8 +17,15 @@ import (
 	"lp700-server/internal/config"
 	"lp700-server/internal/hub"
 	"lp700-server/internal/lpmeter"
+	"lp700-server/internal/update"
 	"lp700-server/internal/web"
 )
+
+// version is the release tag this binary was built from. The release
+// workflow and deploy/build-pi.sh stamp it with
+// -ldflags "-X main.version=vX.Y.Z"; a plain `go build` / `go run` keeps
+// "dev", which never runs the automatic update check.
+var version = "dev"
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "probe" {
@@ -28,7 +35,13 @@ func main() {
 	configPath := flag.String("config", "/etc/lp700-server/config.toml", "config file path (missing file is fine; defaults are used)")
 	backendOverride := flag.String("backend", "", "override meter.backend: hid | simulator | auto (defaults to config)")
 	verbose := flag.Bool("v", false, "verbose logging at start (debug-level); the level can also be changed at runtime via /api/log-level or the web UI's Setup overlay")
+	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Println("lp700-server", version)
+		return
+	}
 
 	var levelVar slog.LevelVar
 	levelVar.Set(slog.LevelError)
@@ -48,6 +61,7 @@ func main() {
 
 	backend := resolveBackend(cfg.Meter.Backend, logger)
 	logger.Info("config loaded",
+		"version", version,
 		"path", *configPath,
 		"backend", backend,
 		"vendor_id", fmt.Sprintf("0x%04x", cfg.Meter.VendorID),
@@ -129,6 +143,17 @@ func main() {
 			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
 		}
 	})
+	// GitHub release check: its own goroutine and http.Client, never on a
+	// request path or near the HID owner. A newer release is logged once on
+	// a handler that prints whatever the runtime log level is, and served
+	// read-only at /api/update for the web UI's notice.
+	updates := update.New(update.Options{
+		Enabled: cfg.Updates.Check,
+		Version: version,
+		Logger:  logger,
+		Notice:  slog.New(slog.NewTextHandler(os.Stderr, nil)),
+	})
+	mux.Handle("/api/update", updates)
 	mux.Handle("/", web.StaticHandler())
 
 	srv := &http.Server{
@@ -139,6 +164,7 @@ func main() {
 
 	go source.Run(ctx)
 	go h.Run(ctx)
+	go updates.Run(ctx)
 
 	go func() {
 		logger.Info("http listening", "addr", cfg.Server.Listen)
