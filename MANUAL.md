@@ -43,9 +43,9 @@ showing, updated several times a second.
 | Average power          | Average forward power in watts (the meter's `AV` reading).                                                   |
 | Peak power             | In **Peak Hold** mode, the firmware-maintained held peak (sticks at the maximum until the meter clears it). In **Average** or **Tune** mode, the live envelope peak this poll cycle. Mirrors the meter's `PK` reading. |
 | SWR                    | Standing-wave ratio, floor 1.00.                                                                             |
-| Alarm                  | Disabled / Armed / **TRIPPED**. Click to toggle enable/disable.                                              |
+| Alarm                  | Disabled / Armed / **TRIPPED**. Click to toggle enable/disable (not in `CH Auto`, see §3).                   |
 | Channel                | `CH Auto` (meter picks 1..4) or one of `CH 1`–`CH 4`. The active option is highlighted.                      |
-| Range                  | Cycles through `5W`, `10W`, `25W`, `50W`, `100W`, `250W`, `500W`, `1K`, `2.5K`, `5K`, `10K`, `auto`.         |
+| Range                  | Cycles through `5W`, `10W`, `25W`, `50W`, `100W`, `250W`, `500W`, `1K`, `2.5K`, `5K`, `10K`, `auto`. Greyed out in `CH Auto`. |
 | Peak / Avg / Tune      | Display mode for the meter's large numeric area; the active option is highlighted.                           |
 
 **Average** is always live (mirrors the LCD's small `AV` indicator).
@@ -69,6 +69,13 @@ ends up at the second step.
 | **Range: …**       | Single press advances one notch through the range table.           |
 | **Peak Hold / Average / Tune** | Cycles the meter's large numeric display mode.         |
 | **Alarm pill**     | Toggles the alarm enable on/off (it does **not** clear a tripped state — the meter clears that itself when SWR/power drops). |
+
+**Range and Alarm are locked while the channel is on `CH Auto`.** The
+meter stores both per channel and won't change either in Auto (LP-500
+user guide v5.4), so the Range button is greyed out, clicks on the Alarm
+pill are ignored, and a grey note under the Channel buttons says to pick
+CH 1–4. Other clients that send `range_step` / `alarm_toggle` in CH Auto
+get `ack ok:false` with the reason.
 
 Numeric **alarm thresholds** (Power-W, SWR), **callsign**, **coupler**
 model, and **firmware revision** are stored in the meter's NVRAM and

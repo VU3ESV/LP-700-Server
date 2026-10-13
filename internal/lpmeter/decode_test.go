@@ -3,6 +3,7 @@ package lpmeter
 import (
 	"encoding/binary"
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -315,27 +316,34 @@ func TestSampleReportRejectsOutOfRange(t *testing.T) {
 }
 
 func TestVerbAvailableInState(t *testing.T) {
-	// All verbs are currently always allowed; the function is kept as
-	// a future hook in case a real firmware quirk surfaces. (An earlier
-	// version gated range_step / alarm_toggle in auto-channel based on
-	// a misread probe; corrected on 2026-05-16 — see decode.go doc.)
-	cases := []struct {
-		verb string
-		snap *Snapshot
+	auto := &Snapshot{AutoChannel: true, Channel: 1}
+	tests := []struct {
+		name      string
+		verb      string
+		snap      *Snapshot
+		wantBlock bool
 	}{
-		{"range_step", nil},
-		{"range_step", &Snapshot{AutoChannel: true, Channel: 1}},
-		{"range_step", &Snapshot{AutoChannel: false, Channel: 2}},
-		{"alarm_toggle", &Snapshot{AutoChannel: true, Channel: 1}},
-		{"alarm_toggle", &Snapshot{AutoChannel: false, Channel: 3}},
-		{"channel_step", &Snapshot{AutoChannel: true, Channel: 1}},
-		{"mode_step", &Snapshot{AutoChannel: true, Channel: 1}},
-		{"peak_toggle", &Snapshot{AutoChannel: true, Channel: 1}},
+		{"nil snap lets anything through", "range_step", nil, false},
+		{"range_step OK in manual channel", "range_step",
+			&Snapshot{AutoChannel: false, Channel: 2}, false},
+		{"range_step blocked in CH Auto", "range_step", auto, true},
+		{"alarm_toggle blocked in CH Auto", "alarm_toggle", auto, true},
+		{"alarm_toggle OK in manual channel", "alarm_toggle",
+			&Snapshot{AutoChannel: false, Channel: 3}, false},
+		{"channel_step allowed in CH Auto", "channel_step", auto, false},
+		{"mode_step allowed in CH Auto", "mode_step", auto, false},
+		{"peak_toggle allowed in CH Auto", "peak_toggle", auto, false},
+		{"setup allowed in CH Auto", "setup", auto, false},
+		{"freeze allowed in CH Auto", "freeze", auto, false},
 	}
-	for _, tt := range cases {
-		t.Run(tt.verb, func(t *testing.T) {
-			if got := VerbAvailableInState(tt.verb, tt.snap); got != "" {
-				t.Errorf("VerbAvailableInState(%q, %+v) = %q, want \"\"", tt.verb, tt.snap, got)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := VerbAvailableInState(tt.verb, tt.snap)
+			if tt.wantBlock && !strings.Contains(got, "CH Auto") {
+				t.Errorf("expected a CH Auto block reason, got %q", got)
+			}
+			if !tt.wantBlock && got != "" {
+				t.Errorf("expected no block, got %q", got)
 			}
 		})
 	}

@@ -102,8 +102,8 @@ once:
 |---------------------------|-----------------|--------------------------------------------------|
 | Peak / Avg / Tune cycle   | `peak_toggle`   | Cycles the meter's large numeric display mode    |
 | Channel step              | `channel_step`  | Auto → CH 1 → CH 2 → CH 3 → CH 4 → Auto          |
-| Range step                | `range_step`    | 5W → 10W → … → 10K → Auto → 5W                   |
-| Alarm toggle              | `alarm_toggle`  | Flips alarm enable on/off                        |
+| Range step                | `range_step`    | 5W → 10W → … → 10K → Auto → 5W (refused in CH Auto) |
+| Alarm toggle              | `alarm_toggle`  | Flips alarm enable on/off (refused in CH Auto)   |
 | Mode step (LCD top mode)  | `mode_step`     | Power/SWR → Waveform → Spectrum → Setup → …      |
 | Setup toggle              | `setup`         | Enters/exits the Setup screen                    |
 | Freeze                    | `freeze`        | Freezes the Waveform / Spectrum trace            |
