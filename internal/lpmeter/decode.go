@@ -63,19 +63,16 @@ const (
 	// OffsetRange: byte 6, 0..10 = 5W..10KW, 11 = Auto. Per-channel —
 	// each of CH1..CH4 carries its own range setting, so in auto-
 	// channel mode the displayed range is whichever channel auto-
-	// detection has currently locked to. F3 (Range) on the meter's
-	// front panel cycles the auto-locked channel's range; the
-	// displayed value may appear unstable simply because auto-
-	// channel keeps re-locking between presses. (An earlier
-	// investigation misread this as "F3 is no-op in auto-channel".)
+	// detection has currently locked to. F3 (Range) can't change it
+	// while the channel is on Auto — see VerbAvailableInState.
 	OffsetRange = 6
 	// OffsetAlarm: byte 7 is an alarm-DISABLED flag (inverted polarity).
 	// 0x00 = alarm armed on the LCD, 0x01 = alarm off. The DataLogger
 	// VB6 source labelled it "Alarm State" without specifying polarity;
 	// confirmed inverted on 2026-05-08 by toggling F4 in CH1 manual
-	// mode. The decoder negates the byte before populating
-	// AlarmEnabled, so the JSON/UI layer keeps a positive
-	// "alarm_enabled" semantic.
+	// mode (F4, like F3, can't change anything in CH Auto). The decoder
+	// negates the byte before populating AlarmEnabled, so the JSON/UI
+	// layer keeps a positive "alarm_enabled" semantic.
 	OffsetAlarm = 7
 	OffsetPeakAvg     = 8 // 0=peak_hold, 1=average, 2=tune
 	OffsetAlarmSet    = 9 // alarm setpoint index (encoding TBD)
@@ -320,22 +317,29 @@ var KnownVerbs = map[string]bool{
 // in the given state, or a reason string explaining why it will be
 // silently ignored.
 //
-// Currently no verbs are gated. An earlier version of this function
-// NACKed range_step / alarm_toggle in auto-channel mode based on a
-// probe that observed "range doesn't change after 6 presses" — but
-// that observation was actually the auto-channel detector re-locking
-// to a different channel between presses (each channel has its own
-// range, so the displayed range is whichever channel auto-locked to
-// at that moment). On the meter's physical front panel, F3 in
-// pwr/swr + auto-channel does cycle the auto-locked channel's range,
-// and the firmware accepts the verb. Confirmed on the bench
-// 2026-05-16 by VU2CPL.
+// F3 (Range) and F4 (Alarm) are per-channel settings, and the firmware
+// refuses to change either while the channel is on Auto (IN byte 4 ==
+// 0, snap.AutoChannel == true). The LP-500 user guide v5.4 ends both
+// the Range and the Alarm button paragraphs with "This choice can't be
+// changed when the CH button is in Auto", and the LP-700 bench test of
+// 2026-10-13 (VU2CPL) confirmed neither setting moves in CH Auto. The
+// hub NACKs instead of ACKing a write the meter will ignore.
 //
-// Kept as a hook in case a future quirk requires per-state gating.
-// snap may be nil (no telemetry observed yet on this connection).
+// (This gate was added 2026-05-09, removed 2026-05-16 on a misreading
+// of the manual, and restored 2026-10-13.)
+//
+// snap may be nil (no telemetry observed yet on this connection), in
+// which case we let the verb through and let the firmware decide.
 func VerbAvailableInState(verb string, snap *Snapshot) string {
-	_ = snap
-	_ = verb
+	if snap == nil || !snap.AutoChannel {
+		return ""
+	}
+	switch verb {
+	case "range_step":
+		return "Range can't be changed in CH Auto; select CH 1-4"
+	case "alarm_toggle":
+		return "Alarm can't be changed in CH Auto; select CH 1-4"
+	}
 	return ""
 }
 

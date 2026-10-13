@@ -111,26 +111,30 @@ sample data (NOT just bytes 40..63 — that "secondary slot" model only
 applies to telemetry frames). See "Scope and spectrum sample buffers"
 below.
 
-**Per-channel verbs in auto-channel mode (NOT a firmware quirk —
-correcting an earlier misdiagnosis):** `range_step` (F3) and
-`alarm_toggle` (F4) are per-channel settings. Each of CH1..CH4
-remembers its own range and alarm-enabled state. In auto-channel
-mode, F3/F4 on the meter's front panel mutate the **auto-locked
-channel's** setting — i.e. whichever channel auto-detection
-currently has the signal locked to.
+**Range and Alarm can't change in auto-channel mode:** `range_step`
+(F3) and `alarm_toggle` (F4) are per-channel settings. Each of
+CH1..CH4 remembers its own range and alarm-enabled state, and the
+firmware refuses to change either while the channel is on Auto (IN
+byte 4 == 0). The LP-500 user guide v5.4 (Power/SWR mode) ends both
+the Range and the Alarm button paragraphs with "Note: This choice
+can't be changed when the CH button is in Auto." A bench test on the
+LP-700 on 2026-10-13 (VU2CPL) confirmed neither setting moves in CH
+Auto.
 
-An earlier probe (2026-05-09) sent 6 `range_step` writes in auto-
-channel and saw the *displayed* range stay at 2.5K, which was read
-as "F3 is a no-op in auto-channel mode" and a server-side NACK
-was added. That observation was misleading: each press DID step
-the auto-locked channel's range, but auto-channel kept re-locking
-to a different channel between presses, and the displayed range
-is always whichever channel is currently locked. Confirmed wrong
-on the bench 2026-05-16 by VU2CPL — pressing F3 on the meter in
-pwr/swr + auto-channel does visibly cycle the range.
+`VerbAvailableInState` therefore returns a reason for both verbs when
+the latest snapshot has `auto_channel == true`, and the hub sends
+`ack ok:false` with that reason instead of queueing a write the meter
+would ignore. The simulator ignores both verbs in CH Auto too, and the
+web client disables Range, ignores Alarm clicks and shows a grey note
+there. Tests: `TestVerbAvailableInState`, `TestCommandGatedInCHAuto`
+(hub), `TestSimulatorRangeAlarmFrozenInCHAuto`.
 
-The NACK has been removed; `VerbAvailableInState` is kept as a
-hook in case a real per-state firmware quirk surfaces later.
+History, so this doesn't flip again: the 2026-05-09 NACK (PR #1) was
+right. On 2026-05-16 it was reverted (PR #3) on the theory that each
+press stepped the auto-locked channel's range while auto-channel
+re-locked between presses. That rested on quoting the manual's
+"indexed to the current channel" sentence while missing the "can't be
+changed in Auto" note on the same page. Restored 2026-10-13.
 
 ### IN-report decode
 
