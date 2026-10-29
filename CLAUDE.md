@@ -48,6 +48,9 @@ LP-700-Server/
 - **Deployment target:** 64-bit Raspberry Pi OS. Default port `:8089` so it
   coexists with `LP-100A-Server` on `:8088`.
 - **Auth:** none. LAN-only deployment, document loudly.
+  `/ws` keeps gorilla's same-origin check (`CheckOrigin` left nil) — never
+  reintroduce `return true`. For a login + TLS, bind `127.0.0.1` behind a
+  reverse proxy (README "Security").
 
 ## Backends
 

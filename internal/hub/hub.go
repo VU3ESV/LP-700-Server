@@ -49,10 +49,11 @@ type Options struct {
 
 func NewHub(snapIn <-chan lpmeter.Snapshot, scopeIn <-chan lpmeter.ScopeFrame, spectrumIn <-chan lpmeter.SpectrumFrame, source lpmeter.Source, opts Options, logger *slog.Logger) *Hub {
 	return &Hub{
-		upgrader: websocket.Upgrader{
-			// LAN-only deployment per ARCHITECTURE.md §2; any origin is accepted.
-			CheckOrigin: func(r *http.Request) bool { return true },
-		},
+		// CheckOrigin left nil: gorilla's default refuses a browser whose
+		// Origin host differs from the request Host, so a page on another
+		// site can't drive the meter through a visitor's browser. Native
+		// clients and Node-RED send no Origin and are unaffected.
+		upgrader: websocket.Upgrader{},
 		source:       source,
 		snapIn:       snapIn,
 		scopeIn:      scopeIn,

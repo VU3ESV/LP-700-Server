@@ -173,6 +173,17 @@ for LAN-only deployment. For remote access, front the server with Tailscale
 or WireGuard and bind the listen address to the VPN interface (or
 `127.0.0.1`).
 
+**Browser origin check.** `/ws` refuses a WebSocket upgrade whose `Origin`
+header names a different host:port than the request, so a web page on
+another site can't use a browser on your LAN to drive the meter. The
+embedded web client (same origin), native apps and Node-RED (no `Origin`)
+are unaffected.
+
+**Adding a login and TLS.** Set `listen = "127.0.0.1:8089"` and put a
+reverse proxy (e.g. Caddy with `basicauth` + `tls`) on the LAN address. The
+proxy must pass the original `Host` header through, which Caddy does by
+default, or the origin check will refuse the browser client.
+
 ## HTTP / WebSocket surface
 
 | Path             | Purpose                                                                                  |
