@@ -182,7 +182,9 @@ are unaffected.
 **Adding a login and TLS.** Set `listen = "127.0.0.1:8089"` and put a
 reverse proxy (e.g. Caddy with `basicauth` + `tls`) on the LAN address. The
 proxy must pass the original `Host` header through, which Caddy does by
-default, or the origin check will refuse the browser client.
+default, or the origin check will refuse the browser client. Step by step,
+with a tested Caddyfile, certificate requirements for Mac clients and
+troubleshooting: [docs/REVERSE-PROXY.md](docs/REVERSE-PROXY.md).
 
 ## HTTP / WebSocket surface
 
