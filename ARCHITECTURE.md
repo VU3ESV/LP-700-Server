@@ -232,6 +232,7 @@ the meter's **Power/SWR** screen:
 | Bad/short frame                  | Drop, increment a parse-error counter, do not disconnect.       |
 | Command-echo "ack" frame         | Filtered by `Decode()` (byte[0] != 0 ⇒ skip).                   |
 | Client sends bad JSON            | NACK with `ok:false` if `id` known; close 1003 otherwise.       |
+| `range_step` / `alarm_toggle` in CH Auto | NACK with `ok:false` and a reason; nothing is written (the firmware ignores both in Auto). See `VerbAvailableInState`. |
 | `>max_clients` connect           | New connection gets 503; existing clients unaffected.           |
 | Two clients press *Mode* at once | Both verbs queued FIFO; both get `ack`s; one telemetry update reflects the final state. |
 

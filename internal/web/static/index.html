@@ -92,6 +92,7 @@
   .alarm.armed   { color: var(--green); }
   .alarm.tripped { color: var(--red); border-color: var(--red); }
   .alarm.off     { color: var(--muted); }
+  .alarm.locked  { cursor: not-allowed; }
   dialog.setup {
     background: var(--panel); color: var(--text); border: 1px solid var(--border);
     border-radius: 10px; padding: 16px; width: min(420px, 92vw);
@@ -149,6 +150,9 @@
   <section class="panel span-2">
     <h2>Channel</h2>
     <div class="row" id="channelRow"></div>
+    <p id="chAutoNote" style="margin:10px 0 0;color:var(--muted);font-size:12px;visibility:hidden">
+      Range and Alarm can't be changed in CH Auto. Pick CH 1–4.
+    </p>
   </section>
 
   <section class="panel">
@@ -224,6 +228,14 @@
     else if (data.alarm_tripped) { alarm.className = "alarm tripped"; alarm.textContent = "TRIPPED"; }
     else { alarm.className = "alarm armed"; alarm.textContent = "Armed"; }
 
+    // The meter won't change Range or Alarm while CH is on Auto (LP-500
+    // user guide v5.4; the hub NACKs both verbs there), so lock them.
+    // The alarm box keeps its full colour: it still shows armed/tripped.
+    const autoCh = !!data.auto_channel;
+    $("rangeStep").disabled = !bootCfg.allow_control || autoCh;
+    alarm.classList.toggle("locked", autoCh);
+    $("chAutoNote").style.visibility = autoCh ? "visible" : "hidden";
+
     // Channel buttons
     const row = $("channelRow");
     if (!row.dataset.built) {
@@ -269,7 +281,10 @@
   document.querySelectorAll("[data-peak]").forEach(b => {
     b.addEventListener("click", () => sendCmd("peak_toggle", parseInt(b.dataset.peak, 10)));
   });
-  $("alarmBox").addEventListener("click", () => sendCmd("alarm_toggle", last && last.alarm_enabled ? 0 : 1));
+  $("alarmBox").addEventListener("click", () => {
+    if (last && last.auto_channel) return;
+    sendCmd("alarm_toggle", last && last.alarm_enabled ? 0 : 1);
+  });
 
   // Setup overlay
   const setup = $("setup");

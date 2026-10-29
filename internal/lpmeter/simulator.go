@@ -121,6 +121,11 @@ func applyCommand(state *Snapshot, cmd command) {
 		state.AutoChannel = false
 		state.Channel = cmd.value
 	case "range_step":
+		// Like the real firmware, Range and Alarm don't change in CH Auto
+		// (see VerbAvailableInState; the hub normally NACKs these first).
+		if state.AutoChannel {
+			return
+		}
 		if cmd.value < 0 || cmd.value >= len(rangeNames) {
 			i := indexOfRange(state.Range)
 			state.Range = rangeNames[(i+1)%len(rangeNames)]
@@ -128,6 +133,9 @@ func applyCommand(state *Snapshot, cmd command) {
 		}
 		state.Range = rangeNames[cmd.value]
 	case "alarm_toggle":
+		if state.AutoChannel {
+			return
+		}
 		state.AlarmEnabled = !state.AlarmEnabled
 	case "peak_toggle":
 		if cmd.value < 0 || cmd.value >= len(peakModeNames) {
